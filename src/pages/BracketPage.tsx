@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { BracketSection } from "../components/bracket/BracketSection";
 import type { DragState } from "../components/bracket/BracketSection";
@@ -26,39 +26,32 @@ export function BracketPage() {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [p1Wins, setP1Wins] = useState(0);
   const [p2Wins, setP2Wins] = useState(0);
-  const [dqSlot, setDqSlot] = useState<0 | 1 | 2>(0);
+  const [p1Dq, setP1Dq] = useState(false);
+  const [p2Dq, setP2Dq] = useState(false);
+  const [forcedLoserId, setForcedLoserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingEdit, setConfirmingEdit] = useState(false);
   const [pendingEdit, setPendingEdit] = useState<{
-    match: Match; p1Wins: number; p2Wins: number; dqPlayerId: string | null;
+    match: Match; p1Wins: number; p2Wins: number; dqPlayerIds: string[]; forcedLoserId: string | null;
   } | null>(null);
   const [confirmingBye, setConfirmingBye] = useState(false);
   const [pendingBye, setPendingBye] = useState<{
-    match: Match; p1Wins: number; p2Wins: number; dqPlayerId: string | null;
+    match: Match; p1Wins: number; p2Wins: number; dqPlayerIds: string[]; forcedLoserId: string | null;
   } | null>(null);
 
   // Add player state
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState("");
-  const [newPlayerBracket, setNewPlayerBracket] = useState<MatchBracket>("winners");
   const [newPlayerTreeId, setNewPlayerTreeId] = useState<string>("");
   const [addingPlayer, setAddingPlayer] = useState(false);
 
   // Drag-and-drop state
   const [draggingFrom, setDraggingFrom] = useState<DragState | null>(null);
+  const dragSourceRef = useRef<DragState | null>(null);
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
 
   const incomingBySlot = buildIncomingBySlot(tournamentMatches);
-
-  const getLowestUnfinishedRound = (treeId: string, bracket: MatchBracket): number => {
-    const scoped = tournamentMatches.filter(
-      (m) => m.tree_id === treeId && m.bracket === bracket
-    );
-    const unfinished = scoped.filter((m) => m.status !== "completed");
-    if (unfinished.length > 0) return Math.min(...unfinished.map((m) => m.round));
-    return 1;
-  };
 
   const getLockedRoundsSet = (treeId: string, bracket: MatchBracket): Set<number> =>
     new Set(
@@ -68,32 +61,70 @@ export function BracketPage() {
     );
 
   const isAddTargetLocked =
-    !!newPlayerTreeId && isRoundLocked(newPlayerTreeId, newPlayerBracket, getLowestUnfinishedRound(newPlayerTreeId, newPlayerBracket));
+    !!newPlayerTreeId && isRoundLocked(newPlayerTreeId, "winners", 1);
 
   const handleMatchClick = (match: Match) => {
     if (isReadOnly && match.status !== "completed") return;
     setSelectedMatch(match);
     setP1Wins(match.player1_wins);
     setP2Wins(match.player2_wins);
-    setDqSlot(0);
+    setP1Dq(match.dq_player_id === match.player1_id);
+    setP2Dq(match.dq_player_id === match.player2_id);
+    setForcedLoserId(null);
     setConfirmingEdit(false);
     setPendingEdit(null);
     setConfirmingBye(false);
     setPendingBye(null);
   };
 
-  const computeNewWinner = (m: Match, p1w: number, p2w: number, dq: string | null): string | null => {
-    if (dq) return dq === m.player1_id ? m.player2_id : m.player1_id;
-    if (p1w > p2w) return m.player1_id;
-    if (p2w > p1w) return m.player2_id;
+  const computeNewWinner = (
+    m: Match,
+    p1w: number,
+    p2w: number,
+    dqPlayerIds: string[],
+    forcedLoser: string | null
+  ): string | null => {
+    const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
+    const p1Id = m.player1_id;
+    const p2Id = m.player2_id;
+    const p1Dq = !!p1Id && dqPlayerIds.includes(p1Id);
+    const p2Dq = !!p2Id && dqPlayerIds.includes(p2Id);
+
+    if (p1Dq && p2Dq) return null;
+    if (p1Dq) return p2Id;
+    if (p2Dq) return p1Id;
+
+    // スコア同点時のみ強制敗北を適用(入力済みスコア優先)
+    if (p1w === p2w && forcedLoser && (forcedLoser === p1Id || forcedLoser === p2Id)) {
+      return forcedLoser === p1Id ? p2Id : p1Id;
+    }
+
+    const p1IsReal = !!p1Id && !p1Id.startsWith("dummy-");
+    const p2IsReal = !!p2Id && !p2Id.startsWith("dummy-");
+    const slot1IsBye = p1Id === null && !incoming.slot1;
+    const slot2IsBye = p2Id === null && !incoming.slot2;
+
+    const p1AutoWin = p1IsReal && (slot2IsBye || (p2Id?.startsWith("dummy-") ?? false));
+    const p2AutoWin = p2IsReal && (slot1IsBye || (p1Id?.startsWith("dummy-") ?? false));
+
+    // BYE/DUMMY側スコアを上回らせた場合は実プレイヤー敗北(=勝者なし可)
+    if (p1AutoWin && !p2AutoWin && p2w > p1w) return p2Id;
+    if (p2AutoWin && !p1AutoWin && p1w > p2w) return p1Id;
+
+    if (p1AutoWin && !p2AutoWin) return p1Id;
+    if (p2AutoWin && !p1AutoWin) return p2Id;
+
+    if (p1w > p2w) return p1Id;
+    if (p2w > p1w) return p2Id;
     return null;
   };
 
   const handleSave = async () => {
     if (!selectedMatch || !tournament || isReadOnly) return;
-    const dq_player_id =
-      dqSlot === 1 ? selectedMatch.player1_id :
-      dqSlot === 2 ? selectedMatch.player2_id : null;
+    const dqPlayerIds = [
+      p1Dq ? selectedMatch.player1_id : null,
+      p2Dq ? selectedMatch.player2_id : null,
+    ].filter((id): id is string => !!id);
     const uiState = getUiMatchState(selectedMatch, incomingBySlot);
     if (uiState === "undecided") {
       alert("このカードは未決定です。TBDが解消されてから試合開始してください。");
@@ -105,15 +136,15 @@ export function BracketPage() {
       (selectedMatch.player1_id === null && selectedMatch.player2_id !== null && !incoming.slot1);
 
     if (selectedMatch.status === "completed") {
-      const newWinner = computeNewWinner(selectedMatch, p1Wins, p2Wins, dq_player_id);
+      const newWinner = computeNewWinner(selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId);
       if (newWinner !== selectedMatch.winner_id) {
-        setPendingEdit({ match: selectedMatch, p1Wins, p2Wins, dqPlayerId: dq_player_id });
+        setPendingEdit({ match: selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId });
         setConfirmingEdit(true);
         return;
       }
       setSaving(true);
       try {
-        await correctScore(selectedMatch, p1Wins, p2Wins, dq_player_id);
+        await correctScore(selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId);
         closeModal();
       } finally {
         setSaving(false);
@@ -122,7 +153,7 @@ export function BracketPage() {
     }
 
     if (isByeMatch) {
-      setPendingBye({ match: selectedMatch, p1Wins, p2Wins, dqPlayerId: dq_player_id });
+      setPendingBye({ match: selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId });
       setConfirmingBye(true);
       return;
     }
@@ -132,7 +163,7 @@ export function BracketPage() {
       if (selectedMatch.status === "pending" && uiState === "ready") {
         await startMatch(selectedMatch.id);
       }
-      await recordScore(selectedMatch, p1Wins, p2Wins, dq_player_id);
+      await recordScore(selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId);
       closeModal();
     } finally {
       setSaving(false);
@@ -143,7 +174,13 @@ export function BracketPage() {
     if (!pendingEdit) return;
     setSaving(true);
     try {
-      await correctScore(pendingEdit.match, pendingEdit.p1Wins, pendingEdit.p2Wins, pendingEdit.dqPlayerId);
+      await correctScore(
+        pendingEdit.match,
+        pendingEdit.p1Wins,
+        pendingEdit.p2Wins,
+        pendingEdit.dqPlayerIds,
+        pendingEdit.forcedLoserId
+      );
       closeModal();
     } finally {
       setSaving(false);
@@ -161,7 +198,8 @@ export function BracketPage() {
         pendingBye.match,
         pendingBye.p1Wins,
         pendingBye.p2Wins,
-        pendingBye.dqPlayerId
+        pendingBye.dqPlayerIds,
+        pendingBye.forcedLoserId
       );
       closeModal();
     } finally {
@@ -199,10 +237,30 @@ export function BracketPage() {
       );
       setP1Wins(0);
       setP2Wins(0);
-      setDqSlot(0);
+      setP1Dq(false);
+      setP2Dq(false);
+      setForcedLoserId(null);
     } finally {
       setSaving(false);
     }
+  };
+
+  const applyForcedLoss = (loserSlot: 1 | 2) => {
+    if (!selectedMatch) return;
+
+    const loserId = loserSlot === 1 ? selectedMatch.player1_id : selectedMatch.player2_id;
+    const winnerId = loserSlot === 1 ? selectedMatch.player2_id : selectedMatch.player1_id;
+    const loserName = loserId ? (playerMap.get(loserId)?.name ?? loserId) : "不明";
+    const winnerName = winnerId ? (playerMap.get(winnerId)?.name ?? winnerId) : "不明";
+    const ok = confirm(
+      `「${loserName}」を強制敗北にしますか？\n\n勝者: ${winnerName}\n敗者: ${loserName}\n\nスコアが同点の場合のみ強制敗北を適用します。\nスコア入力済みの場合は入力スコアを優先します。`
+    );
+    if (!ok) return;
+
+    // DQを使わず、同点時の補助判定として強制敗北を保持する
+    setP1Dq(false);
+    setP2Dq(false);
+    setForcedLoserId(loserId ?? null);
   };
 
   const closeModal = () => {
@@ -211,6 +269,7 @@ export function BracketPage() {
     setPendingEdit(null);
     setConfirmingBye(false);
     setPendingBye(null);
+    setForcedLoserId(null);
   };
 
   const getPlayerName = (id: string | null, hasIncomingFeeder = false) => {
@@ -220,14 +279,14 @@ export function BracketPage() {
 
   const handleAddPlayer = async () => {
     if (!newPlayerName.trim() || !newPlayerTreeId) return;
-    const targetRound = getLowestUnfinishedRound(newPlayerTreeId, newPlayerBracket);
-    if (isRoundLocked(newPlayerTreeId, newPlayerBracket, targetRound)) {
+    const targetRound = 1;
+    if (isRoundLocked(newPlayerTreeId, "winners", targetRound)) {
       alert(`Round ${targetRound} は確定済みのため追加できません`);
       return;
     }
     setAddingPlayer(true);
     try {
-      await addParticipantAndAssign(newPlayerName.trim(), newPlayerBracket, newPlayerTreeId);
+      await addParticipantAndAssign(newPlayerName.trim(), "winners", newPlayerTreeId);
       setNewPlayerName("");
       setShowAddPlayer(false);
     } catch (e) {
@@ -237,10 +296,62 @@ export function BracketPage() {
     }
   };
 
-  const handlePlayerDrop = async (targetMatchId: string, targetSlot: 1 | 2) => {
-    if (!draggingFrom) return;
-    if (draggingFrom.matchId === targetMatchId && draggingFrom.slot === targetSlot) return;
-    await swapMatchPlayers(draggingFrom.matchId, draggingFrom.slot, targetMatchId, targetSlot);
+  const handlePlayerDragStart = (state: DragState | null) => {
+    dragSourceRef.current = state;
+    setDraggingFrom(state);
+  };
+
+  const handlePlayerDragEnd = () => {
+    dragSourceRef.current = null;
+    setDraggingFrom(null);
+  };
+
+  useEffect(() => {
+    const clearSelection = () => {
+      dragSourceRef.current = null;
+      setDraggingFrom(null);
+    };
+    window.addEventListener("mouseup", clearSelection);
+    return () => window.removeEventListener("mouseup", clearSelection);
+  }, []);
+
+  const handlePlayerDrop = async (
+    targetMatchId: string,
+    targetSlot: 1 | 2,
+    sourceFromDrop?: DragState
+  ) => {
+    const source = sourceFromDrop ?? dragSourceRef.current ?? draggingFrom;
+    if (!source) return;
+    if (source.matchId === targetMatchId && source.slot === targetSlot) return;
+
+    const isRealPlayerId = (id: string | null): id is string => !!id && !id.startsWith("dummy-");
+    const sourceMatch = tournamentMatches.find((m) => m.id === source.matchId);
+    const targetMatch = tournamentMatches.find((m) => m.id === targetMatchId);
+    if (!sourceMatch || !targetMatch) return;
+
+    const sourcePlayerId =
+      source.playerId ?? (source.slot === 1 ? sourceMatch.player1_id : sourceMatch.player2_id);
+
+    const targetPlayerId = targetSlot === 1 ? targetMatch.player1_id : targetMatch.player2_id;
+    if (!isRealPlayerId(sourcePlayerId) || !isRealPlayerId(targetPlayerId)) {
+      dragSourceRef.current = null;
+      setDraggingFrom(null);
+      return;
+    }
+
+    const sourcePlayerName = playerMap.get(sourcePlayerId)?.name ?? sourcePlayerId;
+    const targetPlayerName = playerMap.get(targetPlayerId)?.name ?? targetPlayerId;
+    const ok = confirm(
+      `プレイヤーを入れ替えますか？\n\n${sourcePlayerName} ⇄ ${targetPlayerName}`
+    );
+    if (!ok) {
+      dragSourceRef.current = null;
+      setDraggingFrom(null);
+      return;
+    }
+
+    await swapMatchPlayers(source.matchId, source.slot, targetMatchId, targetSlot);
+    dragSourceRef.current = null;
     setDraggingFrom(null);
   };
 
@@ -270,8 +381,11 @@ export function BracketPage() {
     return (
       <div className="p-6">
         <h2 className="text-2xl font-bold text-gray-800 mb-4">ブラケット</h2>
+        <p className="text-sm text-gray-500 mb-2">
+          参加者: {participants.length} / {tournament.max_participants}
+        </p>
         <p className="text-gray-400">
-          ブラケットが生成されていません。「大会設定」からブラケットを生成してください。
+          ブラケットが生成されていません。「大会管理」からブラケットを生成してください。
         </p>
       </div>
     );
@@ -304,6 +418,9 @@ export function BracketPage() {
               ＋ プレイヤー追加
             </button>
           )}
+          <span className="text-xs px-3 py-1 rounded-full font-medium bg-blue-50 text-blue-700 border border-blue-200">
+            参加者 {participants.length} / {tournament.max_participants}
+          </span>
           <span
             className={`text-xs px-3 py-1 rounded-full font-medium ${
               tournament.status === "in_progress"
@@ -339,17 +456,10 @@ export function BracketPage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-blue-700">ブラケット</label>
-              <select
-                value={newPlayerBracket}
-                onChange={(e) => setNewPlayerBracket(e.target.value as MatchBracket)}
-                className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                <option value="winners">ウィナーズ</option>
-                {tournament.type === "double_elimination" && (
-                  <option value="losers">ルーザーズ</option>
-                )}
-              </select>
+              <label className="text-xs text-blue-700">追加先</label>
+              <div className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white text-blue-900">
+                ウィナーズ Round 1 固定
+              </div>
             </div>
             {trees.length > 1 && (
               <div className="flex flex-col gap-1">
@@ -502,10 +612,20 @@ export function BracketPage() {
                           className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 text-lg leading-none"
                         >＋</button>
                       </div>
-                      <button
-                        onClick={() => setDqSlot(dqSlot === 1 ? 0 : 1)}
-                        className={`text-xs px-2 py-1 rounded ml-auto ${dqSlot === 1 ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                      >DQ</button>
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          onClick={() => applyForcedLoss(1)}
+                          disabled={!selectedMatch.player1_id || !selectedMatch.player2_id}
+                          className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
+                        >強制敗北</button>
+                        <button
+                          onClick={() => {
+                            setForcedLoserId(null);
+                            setP1Dq((v) => !v);
+                          }}
+                          className={`text-xs px-2 py-1 rounded ${p1Dq ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                        >DQ</button>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-28 text-sm font-medium text-gray-700 truncate">
@@ -522,10 +642,20 @@ export function BracketPage() {
                           className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 text-lg leading-none"
                         >＋</button>
                       </div>
-                      <button
-                        onClick={() => setDqSlot(dqSlot === 2 ? 0 : 2)}
-                        className={`text-xs px-2 py-1 rounded ml-auto ${dqSlot === 2 ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                      >DQ</button>
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          onClick={() => applyForcedLoss(2)}
+                          disabled={!selectedMatch.player1_id || !selectedMatch.player2_id}
+                          className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
+                        >強制敗北</button>
+                        <button
+                          onClick={() => {
+                            setForcedLoserId(null);
+                            setP2Dq((v) => !v);
+                          }}
+                          className={`text-xs px-2 py-1 rounded ${p2Dq ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                        >DQ</button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -585,9 +715,9 @@ export function BracketPage() {
               onMatchClick={handleMatchClick}
               canEdit={!isReadOnly && tournament.status === "in_progress"}
               draggingFrom={draggingFrom}
-              onPlayerDragStart={setDraggingFrom}
+              onPlayerDragStart={handlePlayerDragStart}
               onPlayerDrop={handlePlayerDrop}
-              onDragEnd={() => setDraggingFrom(null)}
+              onDragEnd={handlePlayerDragEnd}
             />
             {losers.length > 0 && (
               <BracketSection
@@ -601,9 +731,9 @@ export function BracketPage() {
                 onMatchClick={handleMatchClick}
                 canEdit={!isReadOnly && tournament.status === "in_progress"}
                 draggingFrom={draggingFrom}
-                onPlayerDragStart={setDraggingFrom}
+                onPlayerDragStart={handlePlayerDragStart}
                 onPlayerDrop={handlePlayerDrop}
-                onDragEnd={() => setDraggingFrom(null)}
+                onDragEnd={handlePlayerDragEnd}
               />
             )}
             {grandFinal.length > 0 && (
@@ -618,9 +748,9 @@ export function BracketPage() {
                 onMatchClick={handleMatchClick}
                 canEdit={!isReadOnly && tournament.status === "in_progress"}
                 draggingFrom={draggingFrom}
-                onPlayerDragStart={setDraggingFrom}
+                onPlayerDragStart={handlePlayerDragStart}
                 onPlayerDrop={handlePlayerDrop}
-                onDragEnd={() => setDraggingFrom(null)}
+                onDragEnd={handlePlayerDragEnd}
               />
             )}
             {gfReset.length > 0 && (
@@ -635,9 +765,9 @@ export function BracketPage() {
                 onMatchClick={handleMatchClick}
                 canEdit={!isReadOnly && tournament.status === "in_progress"}
                 draggingFrom={draggingFrom}
-                onPlayerDragStart={setDraggingFrom}
+                onPlayerDragStart={handlePlayerDragStart}
                 onPlayerDrop={handlePlayerDrop}
-                onDragEnd={() => setDraggingFrom(null)}
+                onDragEnd={handlePlayerDragEnd}
               />
             )}
           </div>
@@ -661,9 +791,9 @@ export function BracketPage() {
             onMatchClick={handleMatchClick}
             canEdit={!isReadOnly && tournament.status === "in_progress"}
             draggingFrom={draggingFrom}
-            onPlayerDragStart={setDraggingFrom}
+            onPlayerDragStart={handlePlayerDragStart}
             onPlayerDrop={handlePlayerDrop}
-            onDragEnd={() => setDraggingFrom(null)}
+            onDragEnd={handlePlayerDragEnd}
           />
         </div>
       )}

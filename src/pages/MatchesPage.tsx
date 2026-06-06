@@ -22,7 +22,8 @@ export function MatchesPage() {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [p1Wins, setP1Wins] = useState(0);
   const [p2Wins, setP2Wins] = useState(0);
-  const [dqSlot, setDqSlot] = useState<0 | 1 | 2>(0);
+  const [p1Dq, setP1Dq] = useState(false);
+  const [p2Dq, setP2Dq] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searching, setSearching] = useState(false);
 
@@ -55,7 +56,8 @@ export function MatchesPage() {
     setSelectedMatch(match);
     setP1Wins(match.player1_wins);
     setP2Wins(match.player2_wins);
-    setDqSlot(0);
+    setP1Dq(match.dq_player_id === match.player1_id);
+    setP2Dq(match.dq_player_id === match.player2_id);
   };
 
   const handleSave = async () => {
@@ -71,13 +73,11 @@ export function MatchesPage() {
       if (selectedMatch.status === "pending" && uiState === "ready") {
         await startMatch(selectedMatch.id);
       }
-      const dq_player_id =
-        dqSlot === 1
-          ? selectedMatch.player1_id
-          : dqSlot === 2
-          ? selectedMatch.player2_id
-          : null;
-      await recordScore(selectedMatch, p1Wins, p2Wins, dq_player_id);
+      const dqPlayerIds = [
+        p1Dq ? selectedMatch.player1_id : null,
+        p2Dq ? selectedMatch.player2_id : null,
+      ].filter((id): id is string => !!id);
+      await recordScore(selectedMatch, p1Wins, p2Wins, dqPlayerIds);
       setSelectedMatch(null);
       setSearchResult(null);
     } finally {
@@ -115,7 +115,8 @@ export function MatchesPage() {
       );
       setP1Wins(0);
       setP2Wins(0);
-      setDqSlot(0);
+      setP1Dq(false);
+      setP2Dq(false);
     } finally {
       setSaving(false);
     }
@@ -350,9 +351,9 @@ export function MatchesPage() {
                   </button>
                 </div>
                 <button
-                  onClick={() => setDqSlot(dqSlot === 1 ? 0 : 1)}
+                  onClick={() => setP1Dq((v) => !v)}
                   className={`text-xs px-2 py-1 rounded ml-auto ${
-                    dqSlot === 1
+                    p1Dq
                       ? "bg-red-500 text-white"
                       : "bg-red-100 text-red-600 hover:bg-red-200"
                   }`}
@@ -381,9 +382,9 @@ export function MatchesPage() {
                   </button>
                 </div>
                 <button
-                  onClick={() => setDqSlot(dqSlot === 2 ? 0 : 2)}
+                  onClick={() => setP2Dq((v) => !v)}
                   className={`text-xs px-2 py-1 rounded ml-auto ${
-                    dqSlot === 2
+                    p2Dq
                       ? "bg-red-500 text-white"
                       : "bg-red-100 text-red-600 hover:bg-red-200"
                   }`}

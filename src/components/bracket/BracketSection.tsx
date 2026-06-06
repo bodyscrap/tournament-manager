@@ -19,8 +19,8 @@ interface Props {
   onMatchClick?: (match: Match) => void;
   canEdit?: boolean;
   draggingFrom?: DragState | null;
-  onPlayerDragStart?: (state: DragState) => void;
-  onPlayerDrop?: (matchId: string, slot: 1 | 2) => void;
+  onPlayerDragStart?: (state: DragState | null) => void;
+  onPlayerDrop?: (matchId: string, slot: 1 | 2, source?: DragState) => void;
   onDragEnd?: () => void;
 }
 
@@ -32,6 +32,10 @@ function getPlayerLabel(
   if (playerId === null) return hasIncomingFeeder ? "TBD" : "BYE";
   const p = playerMap.get(playerId);
   return p ? p.name : playerId.slice(0, 8) + "…";
+}
+
+function isRealPlayerId(playerId: string | null): playerId is string {
+  return !!playerId && !playerId.startsWith("dummy-");
 }
 
 function MatchCard({
@@ -51,11 +55,12 @@ function MatchCard({
   onClick?: () => void;
   canEdit?: boolean;
   draggingFrom?: DragState | null;
-  onPlayerDragStart?: (state: DragState) => void;
-  onPlayerDrop?: (matchId: string, slot: 1 | 2) => void;
+  onPlayerDragStart?: (state: DragState | null) => void;
+  onPlayerDrop?: (matchId: string, slot: 1 | 2, source?: DragState) => void;
   onDragEnd?: () => void;
 }) {
   const incoming = incomingBySlot.get(match.id) ?? { slot1: false, slot2: false };
+  const suppressNextCardClickRef = React.useRef(false);
   const p1 = getPlayerLabel(match.player1_id, playerMap, incoming.slot1);
   const p2 = getPlayerLabel(match.player2_id, playerMap, incoming.slot2);
 
@@ -63,21 +68,81 @@ function MatchCard({
   const p2Win = match.winner_id === match.player2_id && match.winner_id !== null;
   const uiState = getUiMatchState(match, incomingBySlot);
 
-  const isDraggable = canEdit && match.status === "pending";
+  const isReadyCard = uiState === "ready";
+  const isDraggable = !!canEdit && isReadyCard;
   const isSource = draggingFrom?.matchId === match.id;
-  const hasDrag = !!draggingFrom;
 
   const makeDragProps = (slot: 1 | 2, playerId: string | null) => {
     const isSourceSlot = isSource && draggingFrom?.slot === slot;
-    const isTarget = hasDrag && !(draggingFrom?.matchId === match.id && draggingFrom?.slot === slot) && match.status === "pending";
+    const canDragSlot = !!isDraggable && isRealPlayerId(playerId);
+    const isTarget =
+      !!canEdit &&
+      isReadyCard &&
+      isRealPlayerId(playerId) &&
+      !(draggingFrom?.matchId === match.id && draggingFrom?.slot === slot);
     return {
-      draggable: !!isDraggable,
-      onDragStart: isDraggable ? () => onPlayerDragStart?.({ matchId: match.id, slot, playerId }) : undefined,
-      onDragEnd: isDraggable ? onDragEnd : undefined,
-      onDragOver: isTarget ? (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); } : undefined,
-      onDrop: isTarget ? (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); onPlayerDrop?.(match.id, slot); } : undefined,
+      onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        suppressNextCardClickRef.current = true;
+        if (!canDragSlot) {
+          onPlayerDragStart?.(null);
+          return;
+        }
+        onPlayerDragStart?.({ matchId: match.id, slot, playerId });
+      },
+      onMouseUp: (e: React.MouseEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        suppressNextCardClickRef.current = true;
+        if (isTarget) {
+          onPlayerDrop?.(match.id, slot);
+          return;
+        }
+        onDragEnd?.();
+      },
+      onClick: (e: React.MouseEvent<HTMLDivElement>) => {
+        // プレイヤー行の操作ではカード詳細ダイアログを開かない
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      onMouseLeave: () => {
+        // 選択中でないなら終了扱いにして次操作へ備える
+        if (!draggingFrom) onDragEnd?.();
+      },
+      onDragStart: (e: React.DragEvent<HTMLDivElement>) => {
+        // ネイティブDnDは環境差が大きいため無効化
+        e.preventDefault();
+      },
+      onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+      },
+      onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+      },
       className: `flex items-center justify-between gap-1 px-2 py-1.5 text-xs`,
       style: isSourceSlot ? { opacity: 0.4 } : undefined,
+      role: "button" as const,
+      tabIndex: 0,
+      onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (!canDragSlot) {
+            onPlayerDragStart?.(null);
+            return;
+          }
+          onPlayerDragStart?.({ matchId: match.id, slot, playerId });
+        }
+      },
+      onKeyUp: (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (isTarget) {
+            onPlayerDrop?.(match.id, slot);
+            return;
+          }
+          onDragEnd?.();
+        }
+      },
     };
   };
 
@@ -105,7 +170,13 @@ function MatchCard({
   return (
     <div
       className={`bg-white rounded-lg border-2 ${statusColor} shadow-sm w-44 cursor-pointer hover:shadow-md transition-shadow`}
-      onClick={onClick}
+      onClick={() => {
+        if (suppressNextCardClickRef.current) {
+          suppressNextCardClickRef.current = false;
+          return;
+        }
+        onClick?.();
+      }}
     >
       <div className={`${statusBadgeClass} text-[11px] text-center font-medium py-0.5 rounded-t-md`}>
         {getUiMatchStateLabel(uiState)}
@@ -114,7 +185,7 @@ function MatchCard({
         {...slot1Props}
         className={`flex items-center justify-between gap-1 px-2 py-1.5 text-xs border-b border-gray-100 ${
           p1Win ? "bg-green-50 font-bold text-green-800" : "text-gray-700"
-        } ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+        } ${isDraggable ? "cursor-pointer" : ""} select-none`}
       >
         <span className="flex-1 truncate">{p1}</span>
         {match.status !== "pending" && (
@@ -129,7 +200,7 @@ function MatchCard({
         {...slot2Props}
         className={`flex items-center justify-between gap-1 px-2 py-1.5 text-xs ${
           p2Win ? "bg-green-50 font-bold text-green-800" : "text-gray-700"
-        } ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+        } ${isDraggable ? "cursor-pointer" : ""} select-none`}
       >
         <span className="flex-1 truncate">{p2}</span>
         {match.status !== "pending" && (

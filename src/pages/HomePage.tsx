@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import type { Tournament } from "../lib/types";
@@ -23,10 +24,14 @@ function TournamentCard({
   t,
   isActive,
   onClick,
+  onDelete,
+  deleting,
 }: {
   t: Tournament;
   isActive: boolean;
   onClick: () => void;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
   const typeLabel =
     t.type === "single_elimination"
@@ -39,32 +44,44 @@ function TournamentCard({
   });
 
   return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
-        isActive
-          ? "border-blue-500 bg-blue-50"
-          : "border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/50"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-gray-900 truncate">{t.name}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{typeLabel} · {date}</p>
+    <div className="relative">
+      <button
+        onClick={onClick}
+        disabled={deleting}
+        className={`w-full text-left p-4 pr-20 rounded-xl border-2 transition-colors disabled:opacity-60 ${
+          isActive
+            ? "border-blue-500 bg-blue-50"
+            : "border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/50"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-gray-900 truncate">{t.name}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{typeLabel} · {date}</p>
+          </div>
+          <StatusBadge status={t.status} />
         </div>
-        <StatusBadge status={t.status} />
-      </div>
-      {isActive && (
-        <p className="mt-2 text-xs text-blue-600 font-medium">▶ 選択中</p>
-      )}
-    </button>
+        {isActive && (
+          <p className="mt-2 text-xs text-blue-600 font-medium">▶ 選択中</p>
+        )}
+      </button>
+
+      <button
+        onClick={onDelete}
+        disabled={deleting}
+        className="absolute top-3 right-3 px-2.5 py-1 text-xs font-medium rounded-md bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-60"
+      >
+        {deleting ? "削除中..." : "削除"}
+      </button>
+    </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────
 export function HomePage() {
-  const { tournamentList, tournament, selectTournament } = useAppContext();
+  const { tournamentList, tournament, selectTournament, removeTournament } = useAppContext();
   const navigate = useNavigate();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleSelect = async (t: Tournament) => {
     await selectTournament(t.id);
@@ -79,6 +96,16 @@ export function HomePage() {
     // Deselect current tournament so setup page shows create form
     await selectTournament(null);
     navigate("/tournament/setup");
+  };
+
+  const handleDeleteTournament = async (t: Tournament) => {
+    if (!confirm(`「${t.name}」を削除しますか？\nこの操作は取り消せません。`)) return;
+    setDeletingId(t.id);
+    try {
+      await removeTournament(t.id);
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -112,6 +139,8 @@ export function HomePage() {
               t={t}
               isActive={t.id === tournament?.id}
               onClick={() => handleSelect(t)}
+              onDelete={() => handleDeleteTournament(t)}
+              deleting={deletingId === t.id}
             />
           ))}
         </div>

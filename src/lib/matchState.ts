@@ -10,13 +10,36 @@ export interface IncomingBySlot {
 export function buildIncomingBySlot(matches: Match[]): Map<string, IncomingBySlot> {
   const incomingBySlot = new Map<string, IncomingBySlot>();
   for (const m of matches) {
-    if (m.next_match_id && m.next_match_slot) {
+    // completed かつ winner_id がない場合、勝者側スロットへは今後も流入しない。
+    const canFeedWinner = m.status !== "completed" || m.winner_id !== null;
+    if (canFeedWinner && m.next_match_id && m.next_match_slot) {
       const incoming = incomingBySlot.get(m.next_match_id) ?? { slot1: false, slot2: false };
       if (m.next_match_slot === 1) incoming.slot1 = true;
       if (m.next_match_slot === 2) incoming.slot2 = true;
       incomingBySlot.set(m.next_match_id, incoming);
     }
-    if (m.loser_next_match_id && m.loser_next_match_slot) {
+
+    // 敗者側は以下の場合に流入しうる。
+    // - 未完了: まだ敗者が確定していない
+    // - completed + winner_id あり: 敗者を一意に算出可能
+    // - completed + dq_player_id あり: DQ側が敗者
+    const hasSingleAssignedParticipant =
+      (m.player1_id !== null && m.player2_id === null) ||
+      (m.player1_id === null && m.player2_id !== null);
+    const canFeedLoserFromWinner =
+      m.winner_id !== null &&
+      ((m.winner_id === m.player1_id && m.player2_id !== null) ||
+        (m.winner_id === m.player2_id && m.player1_id !== null));
+    const canFeedLoser =
+      // 未完了なら今後敗者が確定する可能性がある
+      m.status !== "completed" ||
+      // DQは dq_player_id 側が敗者として流せる
+      m.dq_player_id !== null ||
+      // 勝者がいて、かつ反対側プレイヤーが実在する場合のみ敗者を流せる
+      canFeedLoserFromWinner ||
+      // BYE強制敗北などで winner_id が null でも敗者は一意に決まるケース
+      (m.status === "completed" && m.winner_id === null && hasSingleAssignedParticipant);
+    if (canFeedLoser && m.loser_next_match_id && m.loser_next_match_slot) {
       const incoming = incomingBySlot.get(m.loser_next_match_id) ?? { slot1: false, slot2: false };
       if (m.loser_next_match_slot === 1) incoming.slot1 = true;
       if (m.loser_next_match_slot === 2) incoming.slot2 = true;

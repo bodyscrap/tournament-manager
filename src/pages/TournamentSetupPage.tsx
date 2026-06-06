@@ -31,8 +31,8 @@ export function TournamentSetupPage() {
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
-  const [type, setType] = useState<"single_elimination" | "double_elimination">("single_elimination");
-  const [maxP, setMaxP] = useState(256);
+  const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
+  const [maxP, setMaxP] = useState(8);
   const [gfReset, setGfReset] = useState(true);
   const [creating, setCreating] = useState(false);
 

@@ -104,7 +104,7 @@ interface AppContextValue {
     grand_final_reset: boolean,
     name: string
   ) => Promise<void>;
-  removeTournament: () => Promise<void>;
+  removeTournament: (id?: string) => Promise<void>;
   addParticipant: (
     name: string,
     character_name: string | null,
@@ -136,7 +136,8 @@ interface AppContextValue {
     match: Match,
     player1_wins: number,
     player2_wins: number,
-    dq_player_id: string | null
+    dq_player_ids: string[],
+    forced_loser_id?: string | null
   ) => Promise<void>;
 
   // Mid-tournament match creation
@@ -166,7 +167,8 @@ interface AppContextValue {
     match: Match,
     player1_wins: number,
     player2_wins: number,
-    dq_player_id: string | null
+    dq_player_ids: string[],
+    forced_loser_id?: string | null
   ) => Promise<void>;
   findActiveMatch: (player_id: string) => Promise<Match | null>;
   findMatchByTwoPlayers: (
@@ -233,6 +235,147 @@ async function performCascadeReset(
     // Reset this match to pending regardless of previous status
     await resetMatchToPending(matchId);
   }
+}
+
+function isDummyPlayerId(id: string | null): boolean {
+  return !!id && id.startsWith("dummy-");
+}
+
+function resolveMatchOutcome(
+  match: Match,
+  allMatches: Match[],
+  player1_wins: number,
+  player2_wins: number,
+  dq_player_ids: string[],
+  forced_loser_id: string | null = null
+): {
+  status: "pending" | "in_progress" | "completed";
+  winner_id: string | null;
+  loser_id: string | null;
+  dq_player_id: string | null;
+} {
+  const incomingBySlot = buildIncomingBySlot(allMatches);
+  const incoming = incomingBySlot.get(match.id) ?? { slot1: false, slot2: false };
+
+  const p1Id = match.player1_id;
+  const p2Id = match.player2_id;
+
+  const dqSet = new Set(
+    dq_player_ids.filter(
+      (id): id is string => !!id && (id === p1Id || id === p2Id)
+    )
+  );
+  const p1Dq = !!p1Id && dqSet.has(p1Id);
+  const p2Dq = !!p2Id && dqSet.has(p2Id);
+
+  const slot1IsBye = p1Id === null && !incoming.slot1;
+  const slot2IsBye = p2Id === null && !incoming.slot2;
+  const p1IsReal = !!p1Id && !isDummyPlayerId(p1Id);
+  const p2IsReal = !!p2Id && !isDummyPlayerId(p2Id);
+
+  // 両者DQは勝者なしで試合完了。次ラウンド側は BYE/TBD 扱いにする。
+  if (p1Dq && p2Dq) {
+    return {
+      status: "completed",
+      winner_id: null,
+      loser_id: null,
+      dq_player_id: null,
+    };
+  }
+
+  // 片側DQは得失ラウンドに関係なく反対側を勝者にする。
+  if (p1Dq) {
+    return {
+      status: "completed",
+      winner_id: p2Id,
+      loser_id: p1Id,
+      dq_player_id: p1Id,
+    };
+  }
+  if (p2Dq) {
+    return {
+      status: "completed",
+      winner_id: p1Id,
+      loser_id: p2Id,
+      dq_player_id: p2Id,
+    };
+  }
+
+  // スコア同点時のみ、強制敗北を適用する(入力済みスコア優先)。
+  if (player1_wins === player2_wins && forced_loser_id && (forced_loser_id === p1Id || forced_loser_id === p2Id)) {
+    const winnerId = forced_loser_id === p1Id ? p2Id : p1Id;
+    return {
+      status: "completed",
+      winner_id: winnerId,
+      loser_id: forced_loser_id,
+      dq_player_id: null,
+    };
+  }
+
+  // BYE / DUMMY 戦は 0-0 でも実プレイヤー側を勝者扱いにする。
+  const p1AutoWin = p1IsReal && (slot2IsBye || isDummyPlayerId(p2Id));
+  const p2AutoWin = p2IsReal && (slot1IsBye || isDummyPlayerId(p1Id));
+
+  // ただしBYE/DUMMY側のスコアを上回らせた場合は、実プレイヤーを敗北扱いにできる。
+  // (遅延参加者を疑似的にルーザーズから参加させる用途)
+  if (p1AutoWin && !p2AutoWin && player2_wins > player1_wins) {
+    return {
+      status: "completed",
+      winner_id: p2Id,
+      loser_id: p1Id,
+      dq_player_id: null,
+    };
+  }
+  if (p2AutoWin && !p1AutoWin && player1_wins > player2_wins) {
+    return {
+      status: "completed",
+      winner_id: p1Id,
+      loser_id: p2Id,
+      dq_player_id: null,
+    };
+  }
+
+  if (p1AutoWin && !p2AutoWin) {
+    return {
+      status: "completed",
+      winner_id: p1Id,
+      loser_id: p2Id,
+      dq_player_id: null,
+    };
+  }
+  if (p2AutoWin && !p1AutoWin) {
+    return {
+      status: "completed",
+      winner_id: p2Id,
+      loser_id: p1Id,
+      dq_player_id: null,
+    };
+  }
+
+  // 通常対戦は得失ラウンドでのみ勝敗を確定する。
+  if (player1_wins > player2_wins && p1Id) {
+    return {
+      status: "completed",
+      winner_id: p1Id,
+      loser_id: p2Id,
+      dq_player_id: null,
+    };
+  }
+  if (player2_wins > player1_wins && p2Id) {
+    return {
+      status: "completed",
+      winner_id: p2Id,
+      loser_id: p1Id,
+      dq_player_id: null,
+    };
+  }
+
+  return {
+    status: "in_progress",
+    winner_id: null,
+    loser_id: null,
+    dq_player_id: null,
+  };
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -419,19 +562,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [fetchTournament]
   );
 
-  const removeTournament = useCallback(async () => {
-    if (!tournament) return;
-    const removedId = tournament.id;
-    await deleteTournament(removedId);
-    activeTournamentIdRef.current = null;
-    localStorage.removeItem("activeTournamentId");
-    setTournament(null);
-    setParticipants([]);
-    setMatches([]);
-    setRoundLocks([]);
+  const removeTournament = useCallback(async (id?: string) => {
+    const targetId = id ?? activeTournamentIdRef.current;
+    if (!targetId) return;
+
+    const removingActive = activeTournamentIdRef.current === targetId;
+    await deleteTournament(targetId);
+
+    if (removingActive) {
+      activeTournamentIdRef.current = null;
+      localStorage.removeItem("activeTournamentId");
+      await loadTournamentData(null);
+    }
+
     const list = await getAllTournaments();
     setTournamentList(list);
-  }, [tournament]);
+  }, [loadTournamentData]);
 
   const isRoundLocked = useCallback(
     (tree_id: string, bracket: MatchBracket, round: number) =>
@@ -610,32 +756,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       match: Match,
       player1_wins: number,
       player2_wins: number,
-      dq_player_id: string | null
+      dq_player_ids: string[],
+      forced_loser_id: string | null = null
     ) => {
       if (!tournament) return;
 
-      let winner_id: string | null = null;
-      let loser_id: string | null = null;
-      let status = match.status;
-
-      if (dq_player_id) {
-        winner_id =
-          dq_player_id === match.player1_id
-            ? match.player2_id
-            : match.player1_id;
-        loser_id = dq_player_id;
-        status = "completed";
-      } else if (player1_wins > player2_wins && match.player1_id) {
-        winner_id = match.player1_id;
-        loser_id = match.player2_id;
-        status = "completed";
-      } else if (player2_wins > player1_wins && match.player2_id) {
-        winner_id = match.player2_id;
-        loser_id = match.player1_id;
-        status = "completed";
-      } else {
-        status = "in_progress";
-      }
+      const { status, winner_id, loser_id, dq_player_id } = resolveMatchOutcome(
+        match,
+        matches,
+        player1_wins,
+        player2_wins,
+        dq_player_ids,
+        forced_loser_id
+      );
 
       await updateMatchScore(
         match.id,
@@ -646,8 +779,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         dq_player_id
       );
 
-      if (status === "completed" && winner_id) {
-        if (match.next_match_id && match.next_match_slot) {
+      if (status === "completed") {
+        if (winner_id && match.next_match_id && match.next_match_slot) {
           await updateMatchPlayer(
             match.next_match_id,
             match.next_match_slot as 1 | 2,
@@ -684,8 +817,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           );
           await insertMatch(resetMatch);
         }
+      }
 
-        // Check if tournament is complete (no more non-completed matches with both players)
+      // Check if tournament is complete (no more non-completed matches with both players)
+      if (status === "completed") {
         const remaining = await getMatchesByTournament(tournament.id);
         const hasMore = remaining.some(
           (m) =>
@@ -777,22 +912,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       match: Match,
       player1_wins: number,
       player2_wins: number,
-      dq_player_id: string | null
+      dq_player_ids: string[],
+      forced_loser_id: string | null = null
     ) => {
       if (!tournament) return;
 
-      let newWinnerId: string | null = null;
-      let newLoserId: string | null = null;
-      if (dq_player_id) {
-        newWinnerId = dq_player_id === match.player1_id ? match.player2_id : match.player1_id;
-        newLoserId = dq_player_id;
-      } else if (player1_wins > player2_wins && match.player1_id) {
-        newWinnerId = match.player1_id;
-        newLoserId = match.player2_id;
-      } else if (player2_wins > player1_wins && match.player2_id) {
-        newWinnerId = match.player2_id;
-        newLoserId = match.player1_id;
-      }
+      const {
+        winner_id: newWinnerId,
+        loser_id: newLoserId,
+        dq_player_id,
+        status: resolvedStatus,
+      } = resolveMatchOutcome(
+        match,
+        matches,
+        player1_wins,
+        player2_wins,
+        dq_player_ids,
+        forced_loser_id
+      );
 
       const oldWinnerId = match.winner_id;
       const oldLoserId =
@@ -802,7 +939,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : match.player1_id
           : null;
 
-      const newStatus = newWinnerId ? "completed" : "in_progress";
+      const bothDq = dq_player_ids.length >= 2;
+      const newStatus =
+        resolvedStatus === "completed" || newWinnerId || newLoserId || bothDq
+          ? "completed"
+          : "in_progress";
 
       if (newWinnerId !== oldWinnerId) {
         // Cascade-reset all downstream matches first
@@ -869,13 +1010,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addParticipantAndAssign = useCallback(
     async (name: string, bracket: MatchBracket, treeId: string) => {
       if (!tournament) return;
-      if (tournament.type !== "double_elimination" && bracket === "losers") {
-        throw new Error("シングルエリミネーションではルーザーズ参加はできません");
+      if (bracket !== "winners") {
+        throw new Error("途中参加はウィナーズ Round 1 のみ対応しています");
       }
       const p = await getTournamentPlayers(tournament.id);
-      const joinFromLosersAsDummyLoss =
-        tournament.type === "double_elimination" && bracket === "losers";
-      const requiredSlots = joinFromLosersAsDummyLoss ? 2 : 1;
+      const requiredSlots = 1;
 
       if (p.length + requiredSlots > tournament.max_participants) {
         throw new Error("参加者上限に達しているため追加できません");
@@ -885,29 +1024,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const nextSeed = p.length + 1;
       await addTournamentPlayer(tournament.id, playerId, nextSeed, name, null, {});
 
-      let dummyId: string | null = null;
-      if (joinFromLosersAsDummyLoss) {
-        dummyId = `dummy-${uuidv4()}`;
-        await addTournamentPlayer(
-          tournament.id,
-          dummyId,
-          nextSeed + 1,
-          `${name} 用ダミー`,
-          null,
-          { role: "dummy" }
-        );
-      }
-
-      const assignmentBracket: MatchBracket = joinFromLosersAsDummyLoss ? "winners" : bracket;
+      const assignmentBracket: MatchBracket = "winners";
 
       const currentMatches = await getMatchesByTournament(tournament.id);
       const scoped = currentMatches.filter(
         (m) => m.bracket === assignmentBracket && m.tree_id === treeId
       );
       const incomingBySlot = buildIncomingBySlot(currentMatches);
-      const unfinished = scoped.filter((m) => m.status !== "completed");
-      const targetRound =
-        unfinished.length > 0 ? Math.min(...unfinished.map((m) => m.round)) : 1;
+      const targetRound = 1;
 
       if (isRoundLocked(treeId, assignmentBracket, targetRound)) {
         throw new Error(`Round ${targetRound} は確定済みのため追加できません`);
@@ -915,9 +1039,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // Reopen an auto-BYE completed match first (one real player, 0-0, no DQ).
       // This prevents creating an extra Round 1 BYE match when a late player joins.
-      const autoByeCompleted = joinFromLosersAsDummyLoss
-        ? undefined
-        : scoped
+      const autoByeCompleted = scoped
         .filter((m) => {
           if (m.round !== targetRound) return false;
           const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
@@ -984,9 +1106,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // BYE slot = pending match that has exactly one player assigned
       // (both-null matches are TBD downstream slots, not BYEs)
-      const byeMatch = joinFromLosersAsDummyLoss
-        ? undefined
-        : pending.find(
+      const byeMatch = pending.find(
         (m) => {
           const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
           const isByeSlot1 = m.player1_id === null && !incoming.slot1;
@@ -1013,7 +1133,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         position: pos,
         bracket: assignmentBracket,
         player1_id: playerId,
-        player2_id: joinFromLosersAsDummyLoss ? dummyId : null,
+        player2_id: null,
         winner_id: null,
         player1_wins: 0,
         player2_wins: 0,
@@ -1165,16 +1285,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await expandBracket("losers", 1);
       }
 
-      if (joinFromLosersAsDummyLoss && dummyId) {
-        await updateMatchScore(match.id, 0, 1, "completed", dummyId, null);
-        if (match.next_match_id && match.next_match_slot) {
-          await updateMatchPlayer(match.next_match_id, match.next_match_slot as 1 | 2, dummyId);
-        }
-        if (match.loser_next_match_id && match.loser_next_match_slot) {
-          await updateMatchPlayer(match.loser_next_match_id, match.loser_next_match_slot as 1 | 2, playerId);
-        }
-      }
-
       await fetchTournament();
     },
     [tournament, fetchTournament, isRoundLocked]
@@ -1185,12 +1295,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const matchA = matches.find((m) => m.id === matchAId);
       const matchB = matches.find((m) => m.id === matchBId);
       if (!matchA || !matchB) return;
+      const incomingBySlot = buildIncomingBySlot(matches);
+      if (getUiMatchState(matchA, incomingBySlot) !== "ready") return;
+      if (getUiMatchState(matchB, incomingBySlot) !== "ready") return;
       const playerA = slotA === 1 ? matchA.player1_id : matchA.player2_id;
       const playerB = slotB === 1 ? matchB.player1_id : matchB.player2_id;
       await updateMatchPlayer(matchAId, slotA, playerB);
       await updateMatchPlayer(matchBId, slotB, playerA);
       setMatches((prev) =>
         prev.map((m) => {
+          if (m.id === matchAId && m.id === matchBId) {
+            const next = { ...m };
+            if (slotA === 1) next.player1_id = playerB;
+            else next.player2_id = playerB;
+            if (slotB === 1) next.player1_id = playerA;
+            else next.player2_id = playerA;
+            return next;
+          }
           if (m.id === matchAId)
             return slotA === 1 ? { ...m, player1_id: playerB } : { ...m, player2_id: playerB };
           if (m.id === matchBId)
