@@ -1,0 +1,157 @@
+// =====================
+// Player
+// =====================
+export interface Player {
+  id: string;
+  name: string;
+  character_name: string | null;
+  attributes: Record<string, string>; // parsed from JSON
+  dq: boolean;
+  created_at: string;
+}
+
+export interface PlayerRow {
+  id: string;
+  name: string;
+  character_name: string | null;
+  attributes: string; // raw JSON string
+  dq: number;
+  created_at: string;
+}
+
+// =====================
+// Tournament
+// =====================
+export type TournamentType = "single_elimination" | "double_elimination";
+export type TournamentStatus = "setup" | "in_progress" | "completed" | "finalized";
+
+export interface Tournament {
+  id: string;
+  name: string;
+  type: TournamentType;
+  max_participants: number;
+  status: TournamentStatus;
+  grand_final_reset: boolean;
+  created_at: string;
+}
+
+export interface TournamentRow {
+  id: string;
+  name: string;
+  type: TournamentType;
+  max_participants: number;
+  status: TournamentStatus;
+  grand_final_reset: number;
+  created_at: string;
+}
+
+// =====================
+// TournamentPlayer
+// =====================
+export interface TournamentPlayer {
+  tournament_id: string;
+  player_id: string;
+  seed: number; // bracket position (1-indexed)
+  name: string;
+  character_name: string | null;
+  attributes: Record<string, string>;
+  dq: boolean;
+}
+
+export interface TournamentPlayerRow {
+  tournament_id: string;
+  player_id: string;
+  seed: number;
+  name: string;
+  character_name: string | null;
+  attributes: string; // raw JSON
+  dq: number;
+}
+
+// =====================
+// BracketTree
+// =====================
+export interface BracketTree {
+  id: string;
+  tournament_id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface BracketTreeRow {
+  id: string;
+  tournament_id: string;
+  name: string;
+  created_at: string;
+}
+
+// =====================
+// Round lock
+// =====================
+export interface RoundLock {
+  tournament_id: string;
+  tree_id: string;
+  bracket: MatchBracket;
+  round: number;
+}
+
+export interface RoundLockRow {
+  tournament_id: string;
+  tree_id: string;
+  bracket: MatchBracket;
+  round: number;
+  locked: number;
+}
+
+// =====================
+// Match
+// =====================
+export type MatchBracket = "winners" | "losers" | "grand_final" | "grand_final_reset";
+export type MatchStatus = "pending" | "in_progress" | "completed";
+
+export interface Match {
+  id: string;
+  tournament_id: string;
+  tree_id: string;
+  round: number;
+  position: number; // within round (0-indexed)
+  bracket: MatchBracket;
+  player1_id: string | null; // null = bye
+  player2_id: string | null; // null = bye
+  winner_id: string | null;
+  player1_wins: number;
+  player2_wins: number;
+  status: MatchStatus;
+  dq_player_id: string | null;
+  next_match_id: string | null;       // winner advances here
+  next_match_slot: number | null;     // 1 or 2 — which slot (player1 or player2) in next_match
+  loser_next_match_id: string | null; // double elim: loser goes here
+  loser_next_match_slot: number | null;
+}
+
+export interface MatchRow {
+  id: string;
+  tournament_id: string;
+  tree_id: string;
+  round: number;
+  position: number;
+  bracket: MatchBracket;
+  player1_id: string | null;
+  player2_id: string | null;
+  winner_id: string | null;
+  player1_wins: number;
+  player2_wins: number;
+  status: MatchStatus;
+  dq_player_id: string | null;
+  next_match_id: string | null;
+  next_match_slot: number | null;
+  loser_next_match_id: string | null;
+  loser_next_match_slot: number | null;
+}
+
+// =====================
+// UI helpers
+// =====================
+export interface PlayerWithSeed extends Player {
+  seed: number;
+}
