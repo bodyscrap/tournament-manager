@@ -29,6 +29,7 @@ import {
   insertMatch,
   updateMatchScore,
   updateMatchPlayer,
+  updateMatchPlayerWithCharacter,
   updateMatchStatus,
   updateMatchProgressionLinks,
   getActiveMatchByPlayer,
@@ -43,6 +44,16 @@ import {
   getRoundLocks,
   lockRound,
   unlockRoundAndLater,
+  getCharacterMasters,
+  createCharacterMaster,
+  deleteCharacterMaster,
+  getCharacterLists,
+  createCharacterList,
+  updateCharacterList,
+  deleteCharacterList,
+  updateTournamentPlayerCharacter,
+  updateMatchCharacters,
+  updateMatchSides,
 } from "../lib/database";
 import {
   generateSingleElimination,
@@ -53,11 +64,14 @@ import {
 import { buildIncomingBySlot, getUiMatchState } from "../lib/matchState";
 import type {
   Player,
+  CharacterMaster,
+  CharacterList,
   Tournament,
   TournamentPlayer,
   BracketTree,
   Match,
   MatchBracket,
+  CharacterInputMode,
   TournamentType,
   TournamentStatus,
   RoundLock,
@@ -71,6 +85,15 @@ interface AppContextValue {
 
   // Players
   players: Player[];
+  characters: CharacterMaster[];
+  characterLists: CharacterList[];
+  fetchCharacters: () => Promise<void>;
+  fetchCharacterLists: () => Promise<void>;
+  addCharacter: (name: string) => Promise<void>;
+  removeCharacter: (id: string) => Promise<void>;
+  addCharacterList: (name: string, characters: string[]) => Promise<void>;
+  editCharacterList: (id: string, name: string, characters: string[]) => Promise<void>;
+  removeCharacterList: (id: string) => Promise<void>;
   fetchPlayers: () => Promise<void>;
   addPlayer: (
     name: string,
@@ -102,7 +125,10 @@ interface AppContextValue {
     type: TournamentType,
     max_participants: number,
     grand_final_reset: boolean,
-    name: string
+    name: string,
+    character_input_mode: CharacterInputMode,
+    character_list_name: string | null,
+    character_list: string[]
   ) => Promise<void>;
   removeTournament: (id?: string) => Promise<void>;
   addParticipant: (
@@ -111,6 +137,7 @@ interface AppContextValue {
     attributes: Record<string, string>,
     player_id?: string
   ) => Promise<void>;
+  setParticipantCharacter: (player_id: string, character_name: string | null) => Promise<void>;
   removeParticipant: (player_id: string) => Promise<void>;
   swapSeeds: (player_id_a: string, player_id_b: string) => Promise<void>;
   randomizeSeeds: () => Promise<void>;
@@ -120,7 +147,10 @@ interface AppContextValue {
   updateTournamentSettings: (
     type: TournamentType,
     max_participants: number,
-    grand_final_reset: boolean
+    grand_final_reset: boolean,
+    character_input_mode: CharacterInputMode,
+    character_list_name: string | null,
+    character_list: string[]
   ) => Promise<void>;
 
   // Bracket trees
@@ -137,7 +167,9 @@ interface AppContextValue {
     player1_wins: number,
     player2_wins: number,
     dq_player_ids: string[],
-    forced_loser_id?: string | null
+    forced_loser_id?: string | null,
+    player1_character_name?: string | null,
+    player2_character_name?: string | null
   ) => Promise<void>;
 
   // Mid-tournament match creation
@@ -163,12 +195,21 @@ interface AppContextValue {
   // Matches
   startMatch: (match_id: string) => Promise<void>;
   setMatchReady: (match_id: string) => Promise<void>;
+  setMatchCharacters: (
+    match: Match,
+    player1_character_name: string | null,
+    player2_character_name: string | null
+  ) => Promise<void>;
+  swapMatchSides: (match_id: string) => Promise<void>;
+  randomizeMatchSides: (match_id: string) => Promise<void>;
   recordScore: (
     match: Match,
     player1_wins: number,
     player2_wins: number,
     dq_player_ids: string[],
-    forced_loser_id?: string | null
+    forced_loser_id?: string | null,
+    player1_character_name?: string | null,
+    player2_character_name?: string | null
   ) => Promise<void>;
   findActiveMatch: (player_id: string) => Promise<Match | null>;
   findMatchByTwoPlayers: (
@@ -239,6 +280,46 @@ async function performCascadeReset(
 
 function isDummyPlayerId(id: string | null): boolean {
   return !!id && id.startsWith("dummy-");
+}
+
+function normalizeCharacterList(values: string[]): string[] {
+  const unique = new Set<string>();
+  for (const raw of values) {
+    const name = raw.trim();
+    if (!name) continue;
+    unique.add(name);
+  }
+  return [...unique];
+}
+
+function sanitizeCharacterByTournament(
+  tournament: Tournament,
+  character_name: string | null
+): string | null {
+  const normalized = character_name?.trim() || null;
+  if (!normalized) return null;
+  if (tournament.character_input_mode !== "list_selection") return normalized;
+  return tournament.character_list.includes(normalized) ? normalized : null;
+}
+
+function validateRequiredCharacterSelection(
+  tournament: Tournament,
+  character_name: string | null,
+  label: string
+): string | null {
+  const raw = character_name?.trim() || null;
+  const sanitized = sanitizeCharacterByTournament(tournament, character_name);
+
+  if (tournament.character_input_mode !== "list_selection") {
+    return sanitized;
+  }
+  if (!raw) {
+    throw new Error(`${label}の使用キャラは必須です`);
+  }
+  if (!sanitized) {
+    throw new Error(`${label}の使用キャラは大会の使用可能キャラリストから選択してください`);
+  }
+  return sanitized;
 }
 
 function resolveMatchOutcome(
@@ -386,6 +467,8 @@ const AppContext = createContext<AppContextValue | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [characters, setCharacters] = useState<CharacterMaster[]>([]);
+  const [characterLists, setCharacterLists] = useState<CharacterList[]>([]);
   const [tournamentList, setTournamentList] = useState<Tournament[]>([]);
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [participants, setParticipants] = useState<TournamentPlayer[]>([]);
@@ -402,6 +485,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const fetchPlayers = useCallback(async () => {
     const data = await getAllPlayers();
     setPlayers(data);
+  }, []);
+
+  const fetchCharacters = useCallback(async () => {
+    const data = await getCharacterMasters();
+    setCharacters(data);
+  }, []);
+
+  const fetchCharacterLists = useCallback(async () => {
+    const data = await getCharacterLists();
+    setCharacterLists(data);
   }, []);
 
   // Load a specific tournament's data by id
@@ -457,6 +550,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ]);
       setPlayers(playerData);
       setTournamentList(tList);
+      setCharacters(await getCharacterMasters());
+      setCharacterLists(await getCharacterLists());
 
       // Restore saved active tournament, or pick the most recent non-finalized
       let activeId: string | null = null;
@@ -526,6 +621,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const addCharacter = useCallback(async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await createCharacterMaster(uuidv4(), trimmed);
+    await fetchCharacters();
+  }, [fetchCharacters]);
+
+  const removeCharacter = useCallback(async (id: string) => {
+    await deleteCharacterMaster(id);
+    await fetchCharacters();
+  }, [fetchCharacters]);
+
+  const addCharacterList = useCallback(async (name: string, characters: string[]) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await createCharacterList(uuidv4(), trimmed, normalizeCharacterList(characters));
+    await fetchCharacterLists();
+  }, [fetchCharacterLists]);
+
+  const editCharacterList = useCallback(async (id: string, name: string, characters: string[]) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await updateCharacterList(id, trimmed, normalizeCharacterList(characters));
+    await fetchCharacterLists();
+  }, [fetchCharacterLists]);
+
+  const removeCharacterList = useCallback(async (id: string) => {
+    await deleteCharacterList(id);
+    await fetchCharacterLists();
+  }, [fetchCharacterLists]);
+
   // ---- Tournament mutations ----
   const selectTournament = useCallback(
     async (id: string | null) => {
@@ -551,10 +677,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       type: TournamentType,
       max_participants: number,
       grand_final_reset: boolean,
-      name: string
+      name: string,
+      character_input_mode: CharacterInputMode,
+      character_list_name: string | null,
+      character_list: string[]
     ) => {
       const id = uuidv4();
-      await createTournament(id, type, max_participants, grand_final_reset, name);
+      await createTournament(
+        id,
+        type,
+        max_participants,
+        grand_final_reset,
+        name,
+        character_input_mode,
+        character_list_name,
+        normalizeCharacterList(character_list)
+      );
       activeTournamentIdRef.current = id;
       localStorage.setItem("activeTournamentId", id);
       await fetchTournament();
@@ -615,7 +753,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const id = player_id ?? uuidv4();
       const p = await getTournamentPlayers(tournament.id);
       const nextSeed = p.length + 1;
-      await addTournamentPlayer(tournament.id, id, nextSeed, name, character_name, attributes);
+      const sanitizedCharacter = validateRequiredCharacterSelection(
+        tournament,
+        character_name,
+        name
+      );
+      await addTournamentPlayer(tournament.id, id, nextSeed, name, sanitizedCharacter, attributes);
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -632,6 +775,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await fetchTournament();
     },
     [tournament, fetchTournament]
+  );
+
+  const setParticipantCharacter = useCallback(
+    async (player_id: string, character_name: string | null) => {
+      if (!tournament) return;
+      const participantName =
+        participants.find((p) => p.player_id === player_id)?.name ?? "参加者";
+      const sanitizedCharacter = validateRequiredCharacterSelection(
+        tournament,
+        character_name,
+        participantName
+      );
+      await updateTournamentPlayerCharacter(tournament.id, player_id, sanitizedCharacter);
+      await fetchTournament();
+    },
+    [tournament, participants, fetchTournament]
   );
 
   const swapSeeds = useCallback(
@@ -658,6 +817,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const generateBracket = useCallback(async () => {
     if (!tournament) return;
+
+    // Freeze character-list snapshot and list name at tournament start.
+    await updateTournamentSettingsDb(
+      tournament.id,
+      tournament.type,
+      tournament.max_participants,
+      tournament.grand_final_reset,
+      tournament.character_input_mode,
+      tournament.character_list_name,
+      tournament.character_list
+    );
+
     await deleteMatchesByTournament(tournament.id);
     await deleteBracketTreesByTournament(tournament.id);
 
@@ -689,16 +860,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setGrandFinalReset = useCallback(
     async (enabled: boolean) => {
       if (!tournament) return;
-      await updateTournamentSettingsDb(tournament.id, tournament.type, tournament.max_participants, enabled);
+      await updateTournamentSettingsDb(
+        tournament.id,
+        tournament.type,
+        tournament.max_participants,
+        enabled,
+        tournament.character_input_mode,
+        tournament.character_list_name,
+        tournament.character_list
+      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
   );
 
   const updateTournamentSettings = useCallback(
-    async (type: TournamentType, max_participants: number, grand_final_reset: boolean) => {
+    async (
+      type: TournamentType,
+      max_participants: number,
+      grand_final_reset: boolean,
+      character_input_mode: CharacterInputMode,
+      character_list_name: string | null,
+      character_list: string[]
+    ) => {
       if (!tournament) return;
-      await updateTournamentSettingsDb(tournament.id, type, max_participants, grand_final_reset);
+      await updateTournamentSettingsDb(
+        tournament.id,
+        type,
+        max_participants,
+        grand_final_reset,
+        character_input_mode,
+        character_list_name,
+        normalizeCharacterList(character_list)
+      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -751,15 +945,103 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [matches]);
 
+  const setMatchCharacters = useCallback(
+    async (
+      match: Match,
+      player1_character_name: string | null,
+      player2_character_name: string | null
+    ) => {
+      if (!tournament) return;
+
+      const validatedP1Character =
+        match.player1_id && !isDummyPlayerId(match.player1_id)
+          ? validateRequiredCharacterSelection(tournament, player1_character_name, "プレイヤー1")
+          : sanitizeCharacterByTournament(tournament, player1_character_name);
+      const validatedP2Character =
+        match.player2_id && !isDummyPlayerId(match.player2_id)
+          ? validateRequiredCharacterSelection(tournament, player2_character_name, "プレイヤー2")
+          : sanitizeCharacterByTournament(tournament, player2_character_name);
+
+      await updateMatchCharacters(
+        match.id,
+        validatedP1Character,
+        validatedP2Character
+      );
+
+      setMatches((prev) =>
+        prev.map((m) =>
+          m.id === match.id
+            ? {
+                ...m,
+                player1_character_name: validatedP1Character,
+                player2_character_name: validatedP2Character,
+              }
+            : m
+        )
+      );
+    },
+    [tournament]
+  );
+
+  const swapMatchSides = useCallback(async (match_id: string) => {
+    const target = matches.find((m) => m.id === match_id);
+    if (!target) return;
+
+    const nextP1Side = target.player2_side;
+    const nextP2Side = target.player1_side;
+    await updateMatchSides(match_id, nextP1Side, nextP2Side);
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.id === match_id
+          ? { ...m, player1_side: nextP1Side, player2_side: nextP2Side }
+          : m
+      )
+    );
+  }, [matches]);
+
+  const randomizeMatchSides = useCallback(async (match_id: string) => {
+    const target = matches.find((m) => m.id === match_id);
+    if (!target) return;
+
+    const keepDefault = Math.random() < 0.5;
+    const nextP1Side: "1P" | "2P" = keepDefault ? "1P" : "2P";
+    const nextP2Side: "1P" | "2P" = keepDefault ? "2P" : "1P";
+    await updateMatchSides(match_id, nextP1Side, nextP2Side);
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.id === match_id
+          ? { ...m, player1_side: nextP1Side, player2_side: nextP2Side }
+          : m
+      )
+    );
+  }, [matches]);
+
   const recordScore = useCallback(
     async (
       match: Match,
       player1_wins: number,
       player2_wins: number,
       dq_player_ids: string[],
-      forced_loser_id: string | null = null
+      forced_loser_id: string | null = null,
+      player1_character_name: string | null = null,
+      player2_character_name: string | null = null
     ) => {
       if (!tournament) return;
+
+      const validatedP1Character =
+        match.player1_id && !isDummyPlayerId(match.player1_id)
+          ? validateRequiredCharacterSelection(tournament, player1_character_name, "プレイヤー1")
+          : sanitizeCharacterByTournament(tournament, player1_character_name);
+      const validatedP2Character =
+        match.player2_id && !isDummyPlayerId(match.player2_id)
+          ? validateRequiredCharacterSelection(tournament, player2_character_name, "プレイヤー2")
+          : sanitizeCharacterByTournament(tournament, player2_character_name);
+
+      await updateMatchCharacters(
+        match.id,
+        validatedP1Character,
+        validatedP2Character
+      );
 
       const { status, winner_id, loser_id, dq_player_id } = resolveMatchOutcome(
         match,
@@ -780,11 +1062,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
 
       if (status === "completed") {
+        const winnerCharacterName =
+          winner_id === match.player1_id
+            ? validatedP1Character
+            : winner_id === match.player2_id
+            ? validatedP2Character
+            : null;
+        const loserCharacterName =
+          loser_id === match.player1_id
+            ? validatedP1Character
+            : loser_id === match.player2_id
+            ? validatedP2Character
+            : null;
+
         if (winner_id && match.next_match_id && match.next_match_slot) {
-          await updateMatchPlayer(
+          await updateMatchPlayerWithCharacter(
             match.next_match_id,
             match.next_match_slot as 1 | 2,
-            winner_id
+            winner_id,
+            winnerCharacterName
           );
         }
         if (
@@ -793,10 +1089,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           match.loser_next_match_id &&
           match.loser_next_match_slot
         ) {
-          await updateMatchPlayer(
+          await updateMatchPlayerWithCharacter(
             match.loser_next_match_id,
             match.loser_next_match_slot as 1 | 2,
-            loser_id
+            loser_id,
+            loserCharacterName
           );
         }
         // Grand Final Reset: losers side (player2 slot) wins
@@ -894,6 +1191,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         winner_id: null,
         player1_wins: 0,
         player2_wins: 0,
+        player1_character_name: null,
+        player2_character_name: null,
+        player1_side: "1P",
+        player2_side: "2P",
         status: "pending",
         dq_player_id: null,
         next_match_id: null,
@@ -913,9 +1214,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       player1_wins: number,
       player2_wins: number,
       dq_player_ids: string[],
-      forced_loser_id: string | null = null
+      forced_loser_id: string | null = null,
+      player1_character_name: string | null = null,
+      player2_character_name: string | null = null
     ) => {
       if (!tournament) return;
+
+      const validatedP1Character =
+        match.player1_id && !isDummyPlayerId(match.player1_id)
+          ? validateRequiredCharacterSelection(tournament, player1_character_name, "プレイヤー1")
+          : sanitizeCharacterByTournament(tournament, player1_character_name);
+      const validatedP2Character =
+        match.player2_id && !isDummyPlayerId(match.player2_id)
+          ? validateRequiredCharacterSelection(tournament, player2_character_name, "プレイヤー2")
+          : sanitizeCharacterByTournament(tournament, player2_character_name);
+
+      await updateMatchCharacters(
+        match.id,
+        validatedP1Character,
+        validatedP2Character
+      );
 
       const {
         winner_id: newWinnerId,
@@ -946,6 +1264,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : "in_progress";
 
       if (newWinnerId !== oldWinnerId) {
+        const newWinnerCharacterName =
+          newWinnerId === match.player1_id
+            ? validatedP1Character
+            : newWinnerId === match.player2_id
+            ? validatedP2Character
+            : null;
+        const newLoserCharacterName =
+          newLoserId === match.player1_id
+            ? validatedP1Character
+            : newLoserId === match.player2_id
+            ? validatedP2Character
+            : null;
+
         // Cascade-reset all downstream matches first
         await performCascadeReset(match, oldWinnerId, oldLoserId, matches);
 
@@ -954,7 +1285,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         // Place the new winner/loser in their downstream slots
         if (newWinnerId && match.next_match_id && match.next_match_slot) {
-          await updateMatchPlayer(match.next_match_id, match.next_match_slot as 1 | 2, newWinnerId);
+          await updateMatchPlayerWithCharacter(
+            match.next_match_id,
+            match.next_match_slot as 1 | 2,
+            newWinnerId,
+            newWinnerCharacterName
+          );
         }
         if (
           tournament.type === "double_elimination" &&
@@ -962,10 +1298,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           match.loser_next_match_id &&
           match.loser_next_match_slot
         ) {
-          await updateMatchPlayer(
+          await updateMatchPlayerWithCharacter(
             match.loser_next_match_id,
             match.loser_next_match_slot as 1 | 2,
-            newLoserId
+            newLoserId,
+            newLoserCharacterName
           );
         }
         // Recreate GF reset match if applicable
@@ -1137,6 +1474,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         winner_id: null,
         player1_wins: 0,
         player2_wins: 0,
+        player1_character_name: null,
+        player2_character_name: null,
+        player1_side: "1P",
+        player2_side: "2P",
         status: "pending",
         dq_player_id: null,
         next_match_id: null,
@@ -1171,6 +1512,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           winner_id: null,
           player1_wins: 0,
           player2_wins: 0,
+          player1_character_name: null,
+          player2_character_name: null,
+          player1_side: "1P",
+          player2_side: "2P",
           status: "pending",
           dq_player_id: null,
           next_match_id: null,
@@ -1344,6 +1689,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value: AppContextValue = {
     initialized,
     players,
+    characters,
+    characterLists,
+    fetchCharacters,
+    fetchCharacterLists,
+    addCharacter,
+    removeCharacter,
+    addCharacterList,
+    editCharacterList,
+    removeCharacterList,
     fetchPlayers,
     addPlayer,
     editPlayer,
@@ -1365,6 +1719,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     createNew,
     removeTournament,
     addParticipant,
+    setParticipantCharacter,
     removeParticipant,
     swapSeeds,
     randomizeSeeds,
@@ -1381,6 +1736,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     swapMatchPlayers,
     startMatch,
     setMatchReady,
+    setMatchCharacters,
+    swapMatchSides,
+    randomizeMatchSides,
     recordScore,
     findActiveMatch,
     findMatchByTwoPlayers,

@@ -20,10 +20,40 @@ export interface PlayerRow {
 }
 
 // =====================
+// Character Master
+// =====================
+export interface CharacterMaster {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface CharacterMasterRow {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface CharacterList {
+  id: string;
+  name: string;
+  characters: string[];
+  created_at: string;
+}
+
+export interface CharacterListRow {
+  id: string;
+  name: string;
+  characters_json: string;
+  created_at: string;
+}
+
+// =====================
 // Tournament
 // =====================
 export type TournamentType = "single_elimination" | "double_elimination";
 export type TournamentStatus = "setup" | "in_progress" | "completed" | "finalized";
+export type CharacterInputMode = "free_input" | "list_selection";
 
 export interface Tournament {
   id: string;
@@ -32,6 +62,9 @@ export interface Tournament {
   max_participants: number;
   status: TournamentStatus;
   grand_final_reset: boolean;
+  character_input_mode: CharacterInputMode;
+  character_list_name: string | null;
+  character_list: string[];
   created_at: string;
 }
 
@@ -42,6 +75,9 @@ export interface TournamentRow {
   max_participants: number;
   status: TournamentStatus;
   grand_final_reset: number;
+  character_input_mode: CharacterInputMode;
+  character_list_name: string | null;
+  character_list_json: string | null;
   created_at: string;
 }
 
@@ -121,6 +157,10 @@ export interface Match {
   winner_id: string | null;
   player1_wins: number;
   player2_wins: number;
+  player1_character_name: string | null;
+  player2_character_name: string | null;
+  player1_side: "1P" | "2P";
+  player2_side: "1P" | "2P";
   status: MatchStatus;
   dq_player_id: string | null;
   next_match_id: string | null;       // winner advances here
@@ -141,6 +181,10 @@ export interface MatchRow {
   winner_id: string | null;
   player1_wins: number;
   player2_wins: number;
+  player1_character_name: string | null;
+  player2_character_name: string | null;
+  player1_side: "1P" | "2P";
+  player2_side: "1P" | "2P";
   status: MatchStatus;
   dq_player_id: string | null;
   next_match_id: string | null;

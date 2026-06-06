@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
-import type { MatchBracket } from "../lib/types";
+import type { MatchBracket, CharacterInputMode } from "../lib/types";
 import { computePlayerRankings } from "../lib/ranking";
 
 export function TournamentSetupPage() {
@@ -11,10 +11,13 @@ export function TournamentSetupPage() {
     matches,
     trees,
     players,
+    characters,
+    characterLists,
     isReadOnly,
     createNew,
     removeTournament,
     addParticipant,
+    setParticipantCharacter,
     removeParticipant,
     swapSeeds,
     randomizeSeeds,
@@ -34,6 +37,10 @@ export function TournamentSetupPage() {
   const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
   const [maxP, setMaxP] = useState(8);
   const [gfReset, setGfReset] = useState(true);
+  const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
+  const [createCharacterListName, setCreateCharacterListName] = useState("");
+  const [createSelectedCharacterListId, setCreateSelectedCharacterListId] = useState("");
+  const [createCharacterListText, setCreateCharacterListText] = useState("");
   const [creating, setCreating] = useState(false);
 
   // --- 設定編集 (setup フェーズ) ---
@@ -41,12 +48,17 @@ export function TournamentSetupPage() {
   const [editType, setEditType] = useState<"single_elimination" | "double_elimination">("single_elimination");
   const [editMaxP, setEditMaxP] = useState(256);
   const [editGfReset, setEditGfReset] = useState(true);
+  const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
+  const [editCharacterListName, setEditCharacterListName] = useState("");
+  const [editSelectedCharacterListId, setEditSelectedCharacterListId] = useState("");
+  const [editCharacterListText, setEditCharacterListText] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
 
   // --- 参加者追加フォーム ---
   const [addName, setAddName] = useState("");
   const [addCharacter, setAddCharacter] = useState("");
   const [adding, setAdding] = useState(false);
+  const [participantCharacterDrafts, setParticipantCharacterDrafts] = useState<Record<string, string>>({});
 
   // --- その他 ---
   const [swapFrom, setSwapFrom] = useState<string | null>(null);
@@ -74,14 +86,28 @@ export function TournamentSetupPage() {
     [participants, matches]
   );
 
+  const parseCharacterListText = (text: string): string[] => {
+    const unique = new Set<string>();
+    for (const line of text.split(/\r?\n/)) {
+      const name = line.trim();
+      if (!name) continue;
+      unique.add(name);
+    }
+    return [...unique];
+  };
+
   // ===== ハンドラ =====
   const handleCreate = async () => {
     const tournamentName =
       name.trim() ||
       `大会 ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "short", day: "numeric" })}`;
+    const characterList = parseCharacterListText(createCharacterListText);
+    const characterListName = createCharacterMode === "list_selection"
+      ? (createCharacterListName.trim() || "カスタムリスト")
+      : null;
     setCreating(true);
     try {
-      await createNew(type, maxP, gfReset, tournamentName);
+      await createNew(type, maxP, gfReset, tournamentName, createCharacterMode, characterListName, characterList);
     } finally {
       setCreating(false);
     }
@@ -92,13 +118,21 @@ export function TournamentSetupPage() {
     setEditType(tournament.type);
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
+    setEditCharacterMode(tournament.character_input_mode);
+    setEditCharacterListName(tournament.character_list_name ?? "");
+    setEditSelectedCharacterListId("");
+    setEditCharacterListText(tournament.character_list.join("\n"));
     setEditSettings(true);
   };
 
   const handleSaveSettings = async () => {
+    const characterList = parseCharacterListText(editCharacterListText);
+    const characterListName = editCharacterMode === "list_selection"
+      ? (editCharacterListName.trim() || "カスタムリスト")
+      : null;
     setSavingSettings(true);
     try {
-      await updateTournamentSettings(editType, editMaxP, editGfReset);
+      await updateTournamentSettings(editType, editMaxP, editGfReset, editCharacterMode, characterListName, characterList);
       setEditSettings(false);
     } finally {
       setSavingSettings(false);
@@ -106,7 +140,12 @@ export function TournamentSetupPage() {
   };
 
   const handleAddParticipant = async () => {
+    if (!tournament) return;
     if (!addName.trim()) return;
+    if (tournament.character_input_mode === "list_selection" && !addCharacter.trim()) {
+      alert("この大会では使用キャラの設定が必須です");
+      return;
+    }
     setAdding(true);
     try {
       await addParticipant(addName.trim(), addCharacter.trim() || null, {});
@@ -118,9 +157,17 @@ export function TournamentSetupPage() {
   };
 
   const handleAddFromRoster = async (playerId: string) => {
+    if (!tournament) return;
     const p = players.find((pl) => pl.id === playerId);
     if (!p) return;
-    await addParticipant(p.name, p.character_name, p.attributes, p.id);
+    const isListMode = tournament.character_input_mode === "list_selection";
+    const charInList = p.character_name && tournament.character_list.includes(p.character_name);
+    if (isListMode && !charInList) {
+      alert(`「${p.name}」はこの大会の使用可能キャラリストに含まれる使用キャラが未設定のため追加できません`);
+      return;
+    }
+    const character = isListMode ? (charInList ? p.character_name : null) : p.character_name;
+    await addParticipant(p.name, character, p.attributes, p.id);
   };
 
   const handleGenerate = async () => {
@@ -215,6 +262,68 @@ export function TournamentSetupPage() {
               <label htmlFor="gfReset" className="text-sm text-gray-700">グランドファイナルリセットを有効にする</label>
             </div>
           )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
+            <select
+              value={createCharacterMode}
+              onChange={(e) => setCreateCharacterMode(e.target.value as CharacterInputMode)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="free_input">自由入力</option>
+              <option value="list_selection">リストから選択</option>
+            </select>
+          </div>
+          {createCharacterMode === "list_selection" && (
+            <div>
+              <div className="mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラリストを選択</label>
+                <select
+                  value={createSelectedCharacterListId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setCreateSelectedCharacterListId(id);
+                    const selected = characterLists.find((list) => list.id === id);
+                    if (!selected) return;
+                    setCreateCharacterListName(selected.name);
+                    setCreateCharacterListText(selected.characters.join("\n"));
+                  }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">-- 手入力 / カスタム --</option>
+                  {characterLists.map((list) => (
+                    <option key={list.id} value={list.id}>{list.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">大会に保存するリスト名</label>
+                <input
+                  value={createCharacterListName}
+                  onChange={(e) => setCreateCharacterListName(e.target.value)}
+                  placeholder="例: S4 公式リスト"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
+                <button
+                  type="button"
+                  onClick={() => setCreateCharacterListText(characters.map((c) => c.name).join("\n"))}
+                  className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
+                >
+                  キャラマスターを反映
+                </button>
+              </div>
+              <textarea
+                value={createCharacterListText}
+                onChange={(e) => setCreateCharacterListText(e.target.value)}
+                rows={5}
+                placeholder="1行に1キャラクター名を入力"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">大会開始時に、この内容のコピーとリスト名を大会データとして保存します。</p>
+            </div>
+          )}
           <button
             onClick={handleCreate}
             disabled={creating}
@@ -235,6 +344,8 @@ export function TournamentSetupPage() {
   };
 
   const rosterNotAdded = players.filter((p) => !participantIds.has(p.id));
+  const isCharacterListMode = tournament.character_input_mode === "list_selection";
+  const tournamentCharacterOptions = tournament.character_list;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -256,6 +367,10 @@ export function TournamentSetupPage() {
           <p className="text-sm text-gray-500 mt-0.5">
             {tournament.type === "single_elimination" ? "シングルエリミネーション" : "ダブルエリミネーション"}{" "}
             / 上限 {tournament.max_participants} 名 /{" "}
+            {tournament.character_input_mode === "list_selection" ? "キャラ: リスト選択" : "キャラ: 自由入力"} /{" "}
+            {tournament.character_input_mode === "list_selection"
+              ? `リスト: ${tournament.character_list_name ?? "未設定"}`
+              : "リスト: なし"} /{" "}
             <span className={`font-medium ${
               tournament.status === "setup" ? "text-yellow-600"
               : tournament.status === "in_progress" ? "text-green-600"
@@ -320,6 +435,68 @@ export function TournamentSetupPage() {
                 <label htmlFor="editGfReset" className="text-sm text-gray-700">グランドファイナルリセットを有効にする</label>
               </div>
             )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
+              <select
+                value={editCharacterMode}
+                onChange={(e) => setEditCharacterMode(e.target.value as CharacterInputMode)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="free_input">自由入力</option>
+                <option value="list_selection">リストから選択</option>
+              </select>
+            </div>
+            {editCharacterMode === "list_selection" && (
+              <div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラリストを選択</label>
+                  <select
+                    value={editSelectedCharacterListId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setEditSelectedCharacterListId(id);
+                      const selected = characterLists.find((list) => list.id === id);
+                      if (!selected) return;
+                      setEditCharacterListName(selected.name);
+                      setEditCharacterListText(selected.characters.join("\n"));
+                    }}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">-- 手入力 / カスタム --</option>
+                    {characterLists.map((list) => (
+                      <option key={list.id} value={list.id}>{list.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">大会に保存するリスト名</label>
+                  <input
+                    value={editCharacterListName}
+                    onChange={(e) => setEditCharacterListName(e.target.value)}
+                    placeholder="例: S4 公式リスト"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
+                  <button
+                    type="button"
+                    onClick={() => setEditCharacterListText(characters.map((c) => c.name).join("\n"))}
+                    className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
+                  >
+                    キャラマスターを反映
+                  </button>
+                </div>
+                <textarea
+                  value={editCharacterListText}
+                  onChange={(e) => setEditCharacterListText(e.target.value)}
+                  rows={5}
+                  placeholder="1行に1キャラクター名を入力"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">大会で固定保存されるキャラ一覧です。元のリストを後で変更してもこの大会には影響しません。</p>
+              </div>
+            )}
             <div className="flex gap-2 pt-1">
               <button
                 onClick={handleSaveSettings}
@@ -372,7 +549,79 @@ export function TournamentSetupPage() {
                 >
                   <span className="w-6 text-center text-xs font-mono text-gray-400">{tp.seed}</span>
                   <span className="flex-1 font-medium text-gray-800">{tp.name}</span>
-                  {tp.character_name && <span className="text-xs text-gray-400">{tp.character_name}</span>}
+                  {isCharacterListMode ? (
+                    <select
+                      value={participantCharacterDrafts[tp.player_id] ?? (tp.character_name ?? "")}
+                      disabled={isReadOnly}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={async (e) => {
+                        const value = e.target.value.trim() || null;
+                        if (!value) {
+                          alert("この大会では使用キャラの設定が必須です");
+                          setParticipantCharacterDrafts((prev) => ({
+                            ...prev,
+                            [tp.player_id]: tp.character_name ?? "",
+                          }));
+                          return;
+                        }
+                        setParticipantCharacterDrafts((prev) => ({
+                          ...prev,
+                          [tp.player_id]: e.target.value,
+                        }));
+                        if ((tp.character_name ?? null) === value) return;
+                        try {
+                          await setParticipantCharacter(tp.player_id, value);
+                        } catch (err) {
+                          alert(err instanceof Error ? err.message : "使用キャラの更新に失敗しました");
+                          setParticipantCharacterDrafts((prev) => ({
+                            ...prev,
+                            [tp.player_id]: tp.character_name ?? "",
+                          }));
+                        }
+                      }}
+                      className="text-xs border border-gray-300 rounded px-2 py-0.5 bg-white disabled:opacity-50"
+                    >
+                      <option value="">キャラ未設定</option>
+                      {tournamentCharacterOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <>
+                      <input
+                        value={participantCharacterDrafts[tp.player_id] ?? (tp.character_name ?? "")}
+                        disabled={isReadOnly}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) =>
+                          setParticipantCharacterDrafts((prev) => ({
+                            ...prev,
+                            [tp.player_id]: e.target.value,
+                          }))
+                        }
+                        onBlur={async (e) => {
+                          const value = e.target.value.trim() || null;
+                          if ((tp.character_name ?? null) === value) return;
+                          await setParticipantCharacter(tp.player_id, value);
+                        }}
+                        onKeyDown={async (e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          const value = (e.currentTarget.value ?? "").trim() || null;
+                          if ((tp.character_name ?? null) === value) return;
+                          await setParticipantCharacter(tp.player_id, value);
+                          e.currentTarget.blur();
+                        }}
+                        list={`character-options-${tp.player_id}`}
+                        className="text-xs border border-gray-300 rounded px-2 py-0.5 bg-white disabled:opacity-50"
+                        placeholder="キャラ未設定"
+                      />
+                      <datalist id={`character-options-${tp.player_id}`}>
+                        {characters.map((c) => (
+                          <option key={c.id} value={c.name} />
+                        ))}
+                      </datalist>
+                    </>
+                  )}
                   {!isReadOnly && (
                     <button
                       onClick={(e) => { e.stopPropagation(); removeParticipant(tp.player_id); }}
@@ -419,17 +668,42 @@ export function TournamentSetupPage() {
                   placeholder="名前 *"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <input
-                  type="text"
-                  value={addCharacter}
-                  onChange={(e) => setAddCharacter(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddParticipant()}
-                  placeholder="使用キャラ（省略可）"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                {isCharacterListMode ? (
+                  <select
+                    value={addCharacter}
+                    onChange={(e) => setAddCharacter(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">使用キャラ未設定</option>
+                    {tournamentCharacterOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      value={addCharacter}
+                      onChange={(e) => setAddCharacter(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddParticipant()}
+                      list="character-master-options-add-participant"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="使用キャラ（未設定可 / 候補から選択 or 自由入力）"
+                    />
+                    <datalist id="character-master-options-add-participant">
+                      {characters.map((c) => (
+                        <option key={c.id} value={c.name} />
+                      ))}
+                    </datalist>
+                  </>
+                )}
                 <button
                   onClick={handleAddParticipant}
-                  disabled={adding || !addName.trim() || participants.length >= tournament.max_participants}
+                  disabled={
+                    adding ||
+                    !addName.trim() ||
+                    participants.length >= tournament.max_participants ||
+                    (isCharacterListMode && !addCharacter.trim())
+                  }
                   className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
                 >
                   {adding ? "追加中..." : "＋ 追加"}
@@ -449,7 +723,10 @@ export function TournamentSetupPage() {
                     <button
                       key={p.id}
                       onClick={() => handleAddFromRoster(p.id)}
-                      disabled={participants.length >= tournament.max_participants}
+                      disabled={
+                        participants.length >= tournament.max_participants ||
+                        (isCharacterListMode && !(p.character_name && tournamentCharacterOptions.includes(p.character_name)))
+                      }
                       className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-blue-50 text-left disabled:opacity-40"
                     >
                       <span className="text-blue-400 text-xs">＋</span>

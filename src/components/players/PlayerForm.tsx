@@ -3,6 +3,7 @@ import type { Player } from "../../lib/types";
 
 interface Props {
   initial?: Player;
+  characterOptions: string[];
   onSave: (
     name: string,
     character_name: string | null,
@@ -11,7 +12,7 @@ interface Props {
   onCancel: () => void;
 }
 
-export function PlayerForm({ initial, onSave, onCancel }: Props) {
+export function PlayerForm({ initial, characterOptions, onSave, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [charName, setCharName] = useState(initial?.character_name ?? "");
   const [attrKey, setAttrKey] = useState("");
@@ -69,9 +70,15 @@ export function PlayerForm({ initial, onSave, onCancel }: Props) {
         <input
           value={charName}
           onChange={(e) => setCharName(e.target.value)}
+          list="character-master-options-player-form"
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="例: リュウ"
+          placeholder="未設定可 / 候補から選択 or 自由入力"
         />
+        <datalist id="character-master-options-player-form">
+          {characterOptions.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </datalist>
       </div>
 
       <div>

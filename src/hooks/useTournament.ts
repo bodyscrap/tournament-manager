@@ -57,7 +57,7 @@ export function useTournament() {
       grand_final_reset: boolean
     ) => {
       const id = uuidv4();
-      await createTournament(id, type, max_participants, grand_final_reset, "大会");
+      await createTournament(id, type, max_participants, grand_final_reset, "大会", "free_input", null, []);
       await fetchTournament();
     },
     [fetchTournament]

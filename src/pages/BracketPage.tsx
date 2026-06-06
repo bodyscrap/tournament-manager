@@ -3,19 +3,23 @@ import { useAppContext } from "../context/AppContext";
 import { BracketSection } from "../components/bracket/BracketSection";
 import type { DragState } from "../components/bracket/BracketSection";
 import type { Match, TournamentPlayer, MatchBracket } from "../lib/types";
-import { buildIncomingBySlot, getUiMatchState } from "../lib/matchState";
+import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../lib/matchState";
+
+type SearchUiState = "all" | "ready" | "undecided" | "in_progress" | "completed";
 
 export function BracketPage() {
   const {
     tournament,
     matches: tournamentMatches,
     participants,
+    characters,
     trees,
     roundLocks,
     isReadOnly,
     recordScore,
     startMatch,
     setMatchReady,
+    setMatchCharacters,
     correctScore,
     addParticipantAndAssign,
     isRoundLocked,
@@ -26,6 +30,8 @@ export function BracketPage() {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [p1Wins, setP1Wins] = useState(0);
   const [p2Wins, setP2Wins] = useState(0);
+  const [p1CharName, setP1CharName] = useState("");
+  const [p2CharName, setP2CharName] = useState("");
   const [p1Dq, setP1Dq] = useState(false);
   const [p2Dq, setP2Dq] = useState(false);
   const [forcedLoserId, setForcedLoserId] = useState<string | null>(null);
@@ -45,13 +51,48 @@ export function BracketPage() {
   const [newPlayerTreeId, setNewPlayerTreeId] = useState<string>("");
   const [addingPlayer, setAddingPlayer] = useState(false);
 
+  // Match search dialog state
+  const [showMatchSearch, setShowMatchSearch] = useState(false);
+  const [searchPlayerId, setSearchPlayerId] = useState<string>("all");
+  const [searchUiState, setSearchUiState] = useState<SearchUiState>("ready");
+
   // Drag-and-drop state
   const [draggingFrom, setDraggingFrom] = useState<DragState | null>(null);
   const dragSourceRef = useRef<DragState | null>(null);
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
+  const isCharacterListMode = tournament?.character_input_mode === "list_selection";
+  const tournamentCharacterOptions = tournament?.character_list ?? [];
 
   const incomingBySlot = buildIncomingBySlot(tournamentMatches);
+  const treeNameById = new Map(trees.map((t) => [t.id, t.name]));
+
+  const getMatchDisplayTitle = (m: Match) => {
+    const bracketLabel =
+      m.bracket === "grand_final"
+        ? "グランドファイナル"
+        : m.bracket === "grand_final_reset"
+        ? "グランドファイナル(リセット)"
+        : `${m.bracket === "winners" ? "W" : "L"} Round ${m.round}`;
+    const treeLabel = m.tree_id ? treeNameById.get(m.tree_id) ?? "未分類" : "未分類";
+    return `${treeLabel} / ${bracketLabel}`;
+  };
+
+  const searchedMatches = tournamentMatches
+    .filter((m) => {
+      const uiState = getUiMatchState(m, incomingBySlot);
+      if (searchUiState !== "all" && uiState !== searchUiState) return false;
+      if (searchPlayerId === "all") return true;
+      return m.player1_id === searchPlayerId || m.player2_id === searchPlayerId;
+    })
+    .sort((a, b) => {
+      const ta = treeNameById.get(a.tree_id) ?? "";
+      const tb = treeNameById.get(b.tree_id) ?? "";
+      if (ta !== tb) return ta.localeCompare(tb, "ja");
+      if (a.bracket !== b.bracket) return a.bracket.localeCompare(b.bracket);
+      if (a.round !== b.round) return a.round - b.round;
+      return a.position - b.position;
+    });
 
   const getLockedRoundsSet = (treeId: string, bracket: MatchBracket): Set<number> =>
     new Set(
@@ -68,6 +109,14 @@ export function BracketPage() {
     setSelectedMatch(match);
     setP1Wins(match.player1_wins);
     setP2Wins(match.player2_wins);
+    const p1DefaultChar =
+      match.player1_character_name ??
+      (match.player1_id ? playerMap.get(match.player1_id)?.character_name ?? null : null);
+    const p2DefaultChar =
+      match.player2_character_name ??
+      (match.player2_id ? playerMap.get(match.player2_id)?.character_name ?? null : null);
+    setP1CharName(p1DefaultChar ?? "");
+    setP2CharName(p2DefaultChar ?? "");
     setP1Dq(match.dq_player_id === match.player1_id);
     setP2Dq(match.dq_player_id === match.player2_id);
     setForcedLoserId(null);
@@ -119,8 +168,39 @@ export function BracketPage() {
     return null;
   };
 
+  const validateRequiredMatchCharacters = (match: Match): boolean => {
+    if (!tournament || tournament.character_input_mode !== "list_selection") return true;
+
+    if (match.player1_id && !match.player1_id.startsWith("dummy-")) {
+      const p1 = p1CharName.trim();
+      if (!p1) {
+        alert("プレイヤー1の使用キャラは必須です");
+        return false;
+      }
+      if (!tournament.character_list.includes(p1)) {
+        alert("プレイヤー1の使用キャラは使用可能キャラリストから選択してください");
+        return false;
+      }
+    }
+
+    if (match.player2_id && !match.player2_id.startsWith("dummy-")) {
+      const p2 = p2CharName.trim();
+      if (!p2) {
+        alert("プレイヤー2の使用キャラは必須です");
+        return false;
+      }
+      if (!tournament.character_list.includes(p2)) {
+        alert("プレイヤー2の使用キャラは使用可能キャラリストから選択してください");
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleSave = async () => {
     if (!selectedMatch || !tournament || isReadOnly) return;
+    if (!validateRequiredMatchCharacters(selectedMatch)) return;
     const dqPlayerIds = [
       p1Dq ? selectedMatch.player1_id : null,
       p2Dq ? selectedMatch.player2_id : null,
@@ -144,7 +224,15 @@ export function BracketPage() {
       }
       setSaving(true);
       try {
-        await correctScore(selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId);
+        await correctScore(
+          selectedMatch,
+          p1Wins,
+          p2Wins,
+          dqPlayerIds,
+          forcedLoserId,
+          p1CharName.trim() || null,
+          p2CharName.trim() || null
+        );
         closeModal();
       } finally {
         setSaving(false);
@@ -163,7 +251,15 @@ export function BracketPage() {
       if (selectedMatch.status === "pending" && uiState === "ready") {
         await startMatch(selectedMatch.id);
       }
-      await recordScore(selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId);
+      await recordScore(
+        selectedMatch,
+        p1Wins,
+        p2Wins,
+        dqPlayerIds,
+        forcedLoserId,
+        p1CharName.trim() || null,
+        p2CharName.trim() || null
+      );
       closeModal();
     } finally {
       setSaving(false);
@@ -172,6 +268,7 @@ export function BracketPage() {
 
   const handleConfirmCorrect = async () => {
     if (!pendingEdit) return;
+    if (!validateRequiredMatchCharacters(pendingEdit.match)) return;
     setSaving(true);
     try {
       await correctScore(
@@ -179,7 +276,9 @@ export function BracketPage() {
         pendingEdit.p1Wins,
         pendingEdit.p2Wins,
         pendingEdit.dqPlayerIds,
-        pendingEdit.forcedLoserId
+        pendingEdit.forcedLoserId,
+        p1CharName.trim() || null,
+        p2CharName.trim() || null
       );
       closeModal();
     } finally {
@@ -189,6 +288,7 @@ export function BracketPage() {
 
   const handleConfirmBye = async () => {
     if (!pendingBye) return;
+    if (!validateRequiredMatchCharacters(pendingBye.match)) return;
     setSaving(true);
     try {
       if (pendingBye.match.status === "pending" && getUiMatchState(pendingBye.match, incomingBySlot) === "ready") {
@@ -199,7 +299,9 @@ export function BracketPage() {
         pendingBye.p1Wins,
         pendingBye.p2Wins,
         pendingBye.dqPlayerIds,
-        pendingBye.forcedLoserId
+        pendingBye.forcedLoserId,
+        p1CharName.trim() || null,
+        p2CharName.trim() || null
       );
       closeModal();
     } finally {
@@ -211,6 +313,11 @@ export function BracketPage() {
     if (!selectedMatch || isReadOnly) return;
     setSaving(true);
     try {
+      await setMatchCharacters(
+        selectedMatch,
+        p1CharName.trim() || null,
+        p2CharName.trim() || null
+      );
       await startMatch(selectedMatch.id);
       setSelectedMatch((prev) => (prev ? { ...prev, status: "in_progress" } : prev));
     } finally {
@@ -237,6 +344,8 @@ export function BracketPage() {
       );
       setP1Wins(0);
       setP2Wins(0);
+      setP1CharName("");
+      setP2CharName("");
       setP1Dq(false);
       setP2Dq(false);
       setForcedLoserId(null);
@@ -270,6 +379,8 @@ export function BracketPage() {
     setConfirmingBye(false);
     setPendingBye(null);
     setForcedLoserId(null);
+    setP1CharName("");
+    setP2CharName("");
   };
 
   const getPlayerName = (id: string | null, hasIncomingFeeder = false) => {
@@ -407,6 +518,12 @@ export function BracketPage() {
           {tournament.name} — ブラケット
         </h2>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowMatchSearch(true)}
+            className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium"
+          >
+            🔎 試合検索
+          </button>
           {tournament.status === "in_progress" && !isReadOnly && (
             <button
               onClick={() => {
@@ -495,6 +612,106 @@ export function BracketPage() {
           <p className="text-xs text-blue-600 mt-1">
             ※ ラウンド見出しをクリックすると確定/解除できます。確定済みラウンドには追加できません。
           </p>
+        </div>
+      )}
+
+      {/* Match search dialog */}
+      {showMatchSearch && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-800 text-lg">試合検索</h3>
+              <button
+                onClick={() => setShowMatchSearch(false)}
+                className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg"
+              >
+                閉じる
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-600">プレイヤー</label>
+                <select
+                  value={searchPlayerId}
+                  onChange={(e) => setSearchPlayerId(e.target.value)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="all">全プレイヤー</option>
+                  {[...participants]
+                    .sort((a, b) => a.seed - b.seed)
+                    .map((p) => (
+                      <option key={p.player_id} value={p.player_id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-600">状態</label>
+                <select
+                  value={searchUiState}
+                  onChange={(e) => setSearchUiState(e.target.value as SearchUiState)}
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="all">すべて</option>
+                  <option value="ready">準備完了</option>
+                  <option value="in_progress">試合中</option>
+                  <option value="undecided">未決定</option>
+                  <option value="completed">結果確定</option>
+                </select>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-3">
+              検索結果: {searchedMatches.length} 件
+            </p>
+
+            <div className="overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+              {searchedMatches.length === 0 ? (
+                <div className="p-6 text-center text-sm text-gray-400">
+                  条件に一致する試合がありません
+                </div>
+              ) : (
+                searchedMatches.map((m) => {
+                  const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
+                  const p1Name = m.player1_id
+                    ? playerMap.get(m.player1_id)?.name ?? m.player1_id
+                    : incoming.slot1
+                    ? "TBD"
+                    : "BYE";
+                  const p2Name = m.player2_id
+                    ? playerMap.get(m.player2_id)?.name ?? m.player2_id
+                    : incoming.slot2
+                    ? "TBD"
+                    : "BYE";
+                  const uiState = getUiMatchState(m, incomingBySlot);
+                  const canOpen = !isReadOnly || m.status === "completed";
+
+                  return (
+                    <div key={m.id} className="p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs text-gray-500 truncate">{getMatchDisplayTitle(m)}</p>
+                        <p className="text-sm font-medium text-gray-800 truncate">{p1Name} vs {p2Name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">状態: {getUiMatchStateLabel(uiState)}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShowMatchSearch(false);
+                          handleMatchClick(m);
+                        }}
+                        disabled={!canOpen}
+                        className="shrink-0 px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-40"
+                      >
+                        開く
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -601,6 +818,35 @@ export function BracketPage() {
                       <span className="w-28 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player1_id, incoming.slot1)}
                       </span>
+                      {isCharacterListMode ? (
+                        <select
+                          value={p1CharName}
+                          onChange={(e) => setP1CharName(e.target.value)}
+                          disabled={!selectedMatch.player1_id}
+                          className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                        >
+                          <option value="">キャラ未設定</option>
+                          {tournamentCharacterOptions.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <>
+                          <input
+                            value={p1CharName}
+                            onChange={(e) => setP1CharName(e.target.value)}
+                            disabled={!selectedMatch.player1_id}
+                            list="character-master-options-match-p1"
+                            className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                            placeholder="キャラ未設定"
+                          />
+                          <datalist id="character-master-options-match-p1">
+                            {characters.map((c) => (
+                              <option key={c.id} value={c.name} />
+                            ))}
+                          </datalist>
+                        </>
+                      )}
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setP1Wins(Math.max(0, p1Wins - 1))}
@@ -631,6 +877,35 @@ export function BracketPage() {
                       <span className="w-28 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player2_id, incoming.slot2)}
                       </span>
+                      {isCharacterListMode ? (
+                        <select
+                          value={p2CharName}
+                          onChange={(e) => setP2CharName(e.target.value)}
+                          disabled={!selectedMatch.player2_id}
+                          className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                        >
+                          <option value="">キャラ未設定</option>
+                          {tournamentCharacterOptions.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <>
+                          <input
+                            value={p2CharName}
+                            onChange={(e) => setP2CharName(e.target.value)}
+                            disabled={!selectedMatch.player2_id}
+                            list="character-master-options-match-p2"
+                            className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                            placeholder="キャラ未設定"
+                          />
+                          <datalist id="character-master-options-match-p2">
+                            {characters.map((c) => (
+                              <option key={c.id} value={c.name} />
+                            ))}
+                          </datalist>
+                        </>
+                      )}
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setP2Wins(Math.max(0, p2Wins - 1))}

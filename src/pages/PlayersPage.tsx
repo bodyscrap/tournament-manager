@@ -5,11 +5,12 @@ import { PlayerQRCode } from "../components/players/PlayerQRCode";
 import type { Player } from "../lib/types";
 
 export function PlayersPage() {
-  const { players, addPlayer, editPlayer, dqPlayer, removePlayer } =
+  const { players, characters, addCharacter, removeCharacter, addPlayer, editPlayer, dqPlayer, removePlayer } =
     useAppContext();
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<Player | null>(null);
   const [search, setSearch] = useState("");
+  const [newCharacter, setNewCharacter] = useState("");
 
   const filtered = players.filter(
     (p) =>
@@ -51,11 +52,66 @@ export function PlayersPage() {
           </h3>
           <PlayerForm
             initial={editTarget ?? undefined}
+            characterOptions={characters.map((c) => c.name)}
             onSave={handleSave}
             onCancel={() => { setShowForm(false); setEditTarget(null); }}
           />
         </div>
       )}
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
+        <h3 className="text-base font-semibold text-gray-700 mb-3">キャラマスター</h3>
+        <div className="flex gap-2 mb-3">
+          <input
+            value={newCharacter}
+            onChange={(e) => setNewCharacter(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key !== "Enter" || !newCharacter.trim()) return;
+              try {
+                await addCharacter(newCharacter.trim());
+                setNewCharacter("");
+              } catch {
+                alert("キャラ追加に失敗しました。重複名の可能性があります。");
+              }
+            }}
+            placeholder="キャラクター名を追加"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={async () => {
+              if (!newCharacter.trim()) return;
+              try {
+                await addCharacter(newCharacter.trim());
+                setNewCharacter("");
+              } catch {
+                alert("キャラ追加に失敗しました。重複名の可能性があります。");
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
+          >
+            追加
+          </button>
+        </div>
+        {characters.length === 0 ? (
+          <p className="text-xs text-gray-400">キャラが未登録です</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {characters.map((c) => (
+              <span key={c.id} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
+                {c.name}
+                <button
+                  onClick={() => {
+                    if (confirm(`「${c.name}」を削除しますか？`)) removeCharacter(c.id);
+                  }}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="mb-4">
         <input

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import type { Match, TournamentPlayer } from "../lib/types";
 import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../lib/matchState";
@@ -13,6 +13,8 @@ export function MatchesPage() {
     findMatchByTwoPlayers,
     startMatch,
     setMatchReady,
+    swapMatchSides,
+    randomizeMatchSides,
     recordScore,
   } = useAppContext();
 
@@ -26,6 +28,12 @@ export function MatchesPage() {
   const [p2Dq, setP2Dq] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!selectedMatch) return;
+    const latest = matches.find((m) => m.id === selectedMatch.id);
+    if (latest) setSelectedMatch(latest);
+  }, [matches, selectedMatch]);
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
   const incomingBySlot = buildIncomingBySlot(matches);
@@ -122,6 +130,35 @@ export function MatchesPage() {
     }
   };
 
+  const handleSwapSides = async () => {
+    if (!selectedMatch || isReadOnly) return;
+    setSaving(true);
+    try {
+      await swapMatchSides(selectedMatch.id);
+      setSelectedMatch((prev) =>
+        prev
+          ? {
+              ...prev,
+              player1_side: prev.player2_side,
+              player2_side: prev.player1_side,
+            }
+          : prev
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRandomSides = async () => {
+    if (!selectedMatch || isReadOnly) return;
+    setSaving(true);
+    try {
+      await randomizeMatchSides(selectedMatch.id);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const MatchDisplay = ({ match }: { match: Match }) => (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
       {(() => {
@@ -162,7 +199,13 @@ export function MatchesPage() {
               : "text-gray-700"
           }`}
         >
+          <span className="inline-flex items-center px-1.5 py-0.5 mr-1 rounded bg-blue-50 text-blue-700 text-[10px] font-semibold">
+            {match.player1_side}
+          </span>
           {getPlayerName(match.player1_id, incoming.slot1)}
+          {match.player1_character_name && (
+            <span className="ml-1 text-[10px] text-gray-500">[{match.player1_character_name}]</span>
+          )}
           {match.status !== "pending" && (
             <span className="ml-2 font-mono text-gray-400">{match.player1_wins}W</span>
           )}
@@ -178,7 +221,13 @@ export function MatchesPage() {
               : "text-gray-700"
           }`}
         >
+          <span className="inline-flex items-center px-1.5 py-0.5 mr-1 rounded bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
+            {match.player2_side}
+          </span>
           {getPlayerName(match.player2_id, incoming.slot2)}
+          {match.player2_character_name && (
+            <span className="ml-1 text-[10px] text-gray-500">[{match.player2_character_name}]</span>
+          )}
           {match.status !== "pending" && (
             <span className="ml-2 font-mono text-gray-400">{match.player2_wins}W</span>
           )}
@@ -310,6 +359,22 @@ export function MatchesPage() {
 
             {!isReadOnly && selectedMatch.status !== "completed" && (
               <div className="mb-3">
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleSwapSides}
+                    disabled={saving}
+                    className="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-medium disabled:opacity-50"
+                  >
+                    1P/2Pを入れ替え
+                  </button>
+                  <button
+                    onClick={handleRandomSides}
+                    disabled={saving}
+                    className="px-3 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-lg text-xs font-medium disabled:opacity-50"
+                  >
+                    サイドをランダム
+                  </button>
+                </div>
                 {getUiMatchState(selectedMatch, incomingBySlot) === "ready" ? (
                   <button
                     onClick={handleSetInProgress}
@@ -333,7 +398,7 @@ export function MatchesPage() {
             <div className="space-y-3 mb-4">
               <div className="flex items-center gap-2">
                 <span className="w-28 text-sm font-medium text-gray-700 truncate">
-                  {getPlayerName(selectedMatch.player1_id)}
+                  {selectedMatch.player1_side} {getPlayerName(selectedMatch.player1_id)}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
@@ -364,7 +429,7 @@ export function MatchesPage() {
 
               <div className="flex items-center gap-2">
                 <span className="w-28 text-sm font-medium text-gray-700 truncate">
-                  {getPlayerName(selectedMatch.player2_id)}
+                  {selectedMatch.player2_side} {getPlayerName(selectedMatch.player2_id)}
                 </span>
                 <div className="flex items-center gap-1">
                   <button

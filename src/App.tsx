@@ -3,9 +3,9 @@ import { AppProvider, useAppContext } from "./context/AppContext";
 import { Sidebar } from "./components/layout/Sidebar";
 import { HomePage } from "./pages/HomePage";
 import { PlayersPage } from "./pages/PlayersPage";
+import { CharacterListsPage } from "./pages/CharacterListsPage";
 import { TournamentSetupPage } from "./pages/TournamentSetupPage";
 import { BracketPage } from "./pages/BracketPage";
-import { MatchesPage } from "./pages/MatchesPage";
 
 function AppShell() {
   const { initialized } = useAppContext();
@@ -28,9 +28,9 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/players" element={<PlayersPage />} />
+          <Route path="/character-lists" element={<CharacterListsPage />} />
           <Route path="/tournament/setup" element={<TournamentSetupPage />} />
           <Route path="/tournament/bracket" element={<BracketPage />} />
-          <Route path="/matches" element={<MatchesPage />} />
         </Routes>
       </main>
     </div>

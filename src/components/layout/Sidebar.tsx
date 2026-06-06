@@ -3,9 +3,9 @@ import { useAppContext } from "../../context/AppContext";
 
 const navItems = [
   { to: "/", label: "大会一覧", icon: "🏠" },
+  { to: "/character-lists", label: "使用キャラリスト", icon: "📚" },
   { to: "/tournament/setup", label: "大会管理", icon: "⚙️" },
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
-  { to: "/matches", label: "試合管理", icon: "⚔️" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
