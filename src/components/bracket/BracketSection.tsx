@@ -67,6 +67,9 @@ function MatchCard({
   const p1Win = match.winner_id === match.player1_id && match.winner_id !== null;
   const p2Win = match.winner_id === match.player2_id && match.winner_id !== null;
   const uiState = getUiMatchState(match, incomingBySlot);
+  const sidePending = uiState === "undecided";
+  const p1SideLabel = sidePending ? "-" : match.player1_side;
+  const p2SideLabel = sidePending ? "-" : match.player2_side;
 
   const isReadyCard = uiState === "ready";
   const isDraggable = !!canEdit && isReadyCard;
@@ -185,8 +188,11 @@ function MatchCard({
         {...slot1Props}
         className={`flex items-center justify-between gap-1 px-2 py-1.5 text-xs border-b border-gray-100 ${
           p1Win ? "bg-green-50 font-bold text-green-800" : "text-gray-700"
-        } ${isDraggable ? "cursor-pointer" : ""} select-none`}
+        } bg-blue-50 ${isDraggable ? "cursor-pointer" : ""} select-none`}
       >
+        <span className={`inline-flex items-center justify-center w-9 rounded border px-1 py-0.5 text-[10px] font-bold ${p1SideLabel === "-" ? "border-gray-300 bg-gray-100 text-gray-500" : p1SideLabel === "1P" ? "border-blue-600 bg-blue-600 text-white" : "border-indigo-600 bg-indigo-600 text-white"}`}>
+          {p1SideLabel}
+        </span>
         <span className="flex-1 truncate">{p1}</span>
         {match.status !== "pending" && (
           <span className="font-mono text-gray-500">{match.player1_wins}</span>
@@ -200,8 +206,11 @@ function MatchCard({
         {...slot2Props}
         className={`flex items-center justify-between gap-1 px-2 py-1.5 text-xs ${
           p2Win ? "bg-green-50 font-bold text-green-800" : "text-gray-700"
-        } ${isDraggable ? "cursor-pointer" : ""} select-none`}
+        } bg-indigo-50 ${isDraggable ? "cursor-pointer" : ""} select-none`}
       >
+        <span className={`inline-flex items-center justify-center w-9 rounded border px-1 py-0.5 text-[10px] font-bold ${p2SideLabel === "-" ? "border-gray-300 bg-gray-100 text-gray-500" : p2SideLabel === "2P" ? "border-indigo-600 bg-indigo-600 text-white" : "border-blue-600 bg-blue-600 text-white"}`}>
+          {p2SideLabel}
+        </span>
         <span className="flex-1 truncate">{p2}</span>
         {match.status !== "pending" && (
           <span className="font-mono text-gray-500">{match.player2_wins}</span>

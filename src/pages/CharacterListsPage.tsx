@@ -1,36 +1,14 @@
 import { useMemo, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import type { CharacterList } from "../lib/types";
+import { buildDuplicateName, parseLinesToUniqueList } from "../lib/characterListUtils";
 
 function toLinesText(values: string[]): string {
   return values.join("\n");
 }
 
-function fromLinesText(text: string): string[] {
-  const unique = new Set<string>();
-  for (const line of text.split(/\r?\n/)) {
-    const v = line.trim();
-    if (!v) continue;
-    unique.add(v);
-  }
-  return [...unique];
-}
-
-function buildDuplicateName(baseName: string, existingNames: string[]): string {
-  const nameSet = new Set(existingNames.map((n) => n.trim()));
-  const firstCandidate = `${baseName} コピー`;
-  if (!nameSet.has(firstCandidate)) return firstCandidate;
-
-  let i = 2;
-  while (nameSet.has(`${baseName} コピー${i}`)) {
-    i += 1;
-  }
-  return `${baseName} コピー${i}`;
-}
-
 export function CharacterListsPage() {
   const {
-    characters,
     characterLists,
     addCharacterList,
     editCharacterList,
@@ -57,7 +35,7 @@ export function CharacterListsPage() {
     const trimmedName = name.trim();
     if (!trimmedName) return;
 
-    const items = fromLinesText(listText);
+    const items = parseLinesToUniqueList(listText);
     setSaving(true);
     try {
       if (editing) {
@@ -81,8 +59,9 @@ export function CharacterListsPage() {
 
   const duplicateList = async (list: CharacterList) => {
     const duplicateName = buildDuplicateName(
-      list.name,
-      characterLists.map((v) => v.name)
+      `${list.name} コピー`,
+      characterLists.map((v) => v.name),
+      ""
     );
     setSaving(true);
     try {
@@ -118,16 +97,7 @@ export function CharacterListsPage() {
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-gray-700">キャラクター一覧</label>
-                <button
-                  type="button"
-                  onClick={() => setListText(characters.map((c) => c.name).join("\n"))}
-                  className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
-                >
-                  キャラマスターを反映
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">キャラクター一覧</label>
               <textarea
                 value={listText}
                 onChange={(e) => setListText(e.target.value)}

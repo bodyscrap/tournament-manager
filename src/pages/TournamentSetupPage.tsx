@@ -1,8 +1,20 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
-import type { MatchBracket, CharacterInputMode } from "../lib/types";
+import type { MatchBracket, CharacterInputMode, TournamentDefaultPlayerSide } from "../lib/types";
 import { computePlayerRankings } from "../lib/ranking";
+import { buildDuplicateName, parseLinesToUniqueList } from "../lib/characterListUtils";
+
+function getDefaultPlayerSideLabel(value: TournamentDefaultPlayerSide): string {
+  switch (value) {
+    case "upper_2p":
+      return "トーナメント表で上が2P";
+    case "random":
+      return "ランダム";
+    default:
+      return "トーナメント表で上が1P(デフォルト)";
+  }
+}
 
 export function TournamentSetupPage() {
   const {
@@ -13,6 +25,7 @@ export function TournamentSetupPage() {
     players,
     characters,
     characterLists,
+    addCharacterList,
     isReadOnly,
     createNew,
     removeTournament,
@@ -24,9 +37,6 @@ export function TournamentSetupPage() {
     generateBracket,
     updateTournamentSettings,
     finalizeTournament,
-    addBracketTree,
-    renameBracketTreeItem,
-    removeBracketTree,
     addMidTournamentMatch,
   } = useAppContext();
 
@@ -37,17 +47,20 @@ export function TournamentSetupPage() {
   const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
   const [maxP, setMaxP] = useState(8);
   const [gfReset, setGfReset] = useState(true);
+  const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
   const [createCharacterListName, setCreateCharacterListName] = useState("");
   const [createSelectedCharacterListId, setCreateSelectedCharacterListId] = useState("");
   const [createCharacterListText, setCreateCharacterListText] = useState("");
   const [creating, setCreating] = useState(false);
+  const [creatingUsedCharacterList, setCreatingUsedCharacterList] = useState(false);
 
   // --- 設定編集 (setup フェーズ) ---
   const [editSettings, setEditSettings] = useState(false);
   const [editType, setEditType] = useState<"single_elimination" | "double_elimination">("single_elimination");
   const [editMaxP, setEditMaxP] = useState(256);
   const [editGfReset, setEditGfReset] = useState(true);
+  const [editDefaultPlayerSide, setEditDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
   const [editCharacterListName, setEditCharacterListName] = useState("");
   const [editSelectedCharacterListId, setEditSelectedCharacterListId] = useState("");
@@ -72,28 +85,29 @@ export function TournamentSetupPage() {
   const [midBracket, setMidBracket] = useState<MatchBracket>("winners");
   const [addingMatch, setAddingMatch] = useState(false);
 
-  // --- ツリー管理 ---
-  const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
-  const [newTreeName, setNewTreeName] = useState("");
-  const [creatingTree, setCreatingTree] = useState(false);
-  const [editingTreeId, setEditingTreeId] = useState<string | null>(null);
-  const [editingTreeName, setEditingTreeName] = useState("");
-
   const participantIds = new Set(participants.map((p) => p.player_id));
   const sortedParticipants = [...participants].sort((a, b) => a.seed - b.seed);
   const rankings = useMemo(
     () => computePlayerRankings(participants, matches),
     [participants, matches]
   );
+  const primaryTree = trees[0] ?? null;
 
-  const parseCharacterListText = (text: string): string[] => {
+  const collectUsedCharacters = (): string[] => {
     const unique = new Set<string>();
-    for (const line of text.split(/\r?\n/)) {
-      const name = line.trim();
-      if (!name) continue;
-      unique.add(name);
+
+    for (const p of participants) {
+      const name = p.character_name?.trim();
+      if (name) unique.add(name);
     }
-    return [...unique];
+    for (const m of matches) {
+      const p1 = m.player1_character_name?.trim();
+      const p2 = m.player2_character_name?.trim();
+      if (p1) unique.add(p1);
+      if (p2) unique.add(p2);
+    }
+
+    return [...unique].sort((a, b) => a.localeCompare(b, "ja"));
   };
 
   // ===== ハンドラ =====
@@ -101,13 +115,22 @@ export function TournamentSetupPage() {
     const tournamentName =
       name.trim() ||
       `大会 ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "short", day: "numeric" })}`;
-    const characterList = parseCharacterListText(createCharacterListText);
+    const characterList = parseLinesToUniqueList(createCharacterListText);
     const characterListName = createCharacterMode === "list_selection"
       ? (createCharacterListName.trim() || "カスタムリスト")
       : null;
     setCreating(true);
     try {
-      await createNew(type, maxP, gfReset, tournamentName, createCharacterMode, characterListName, characterList);
+      await createNew(
+        type,
+        maxP,
+        gfReset,
+        tournamentName,
+        createCharacterMode,
+        characterListName,
+        characterList,
+        createDefaultPlayerSide
+      );
     } finally {
       setCreating(false);
     }
@@ -118,6 +141,7 @@ export function TournamentSetupPage() {
     setEditType(tournament.type);
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
+    setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
     setEditCharacterMode(tournament.character_input_mode);
     setEditCharacterListName(tournament.character_list_name ?? "");
     setEditSelectedCharacterListId("");
@@ -126,13 +150,21 @@ export function TournamentSetupPage() {
   };
 
   const handleSaveSettings = async () => {
-    const characterList = parseCharacterListText(editCharacterListText);
+    const characterList = parseLinesToUniqueList(editCharacterListText);
     const characterListName = editCharacterMode === "list_selection"
       ? (editCharacterListName.trim() || "カスタムリスト")
       : null;
     setSavingSettings(true);
     try {
-      await updateTournamentSettings(editType, editMaxP, editGfReset, editCharacterMode, characterListName, characterList);
+      await updateTournamentSettings(
+        editType,
+        editMaxP,
+        editGfReset,
+        editCharacterMode,
+        characterListName,
+        characterList,
+        editDefaultPlayerSide
+      );
       setEditSettings(false);
     } finally {
       setSavingSettings(false);
@@ -194,23 +226,34 @@ export function TournamentSetupPage() {
     try { await finalizeTournament(); } finally { setFinalizing(false); }
   };
 
-  const handleCreateTree = async () => {
-    const name = newTreeName.trim() || `追加ブラケット ${trees.length + 1}`;
-    setCreatingTree(true);
+  const handleCreateUsedCharacterList = async () => {
+    if (!tournament || tournament.status !== "finalized") return;
+
+    const usedCharacters = collectUsedCharacters();
+    if (usedCharacters.length === 0) {
+      alert("この大会で使用されたキャラクターが見つかりませんでした。");
+      return;
+    }
+
+    const baseName = `${tournament.name} 使用キャラ`;
+    const listName = buildDuplicateName(baseName, characterLists.map((list) => list.name));
+
+    setCreatingUsedCharacterList(true);
     try {
-      const id = await addBracketTree(name);
-      setSelectedTreeId(id);
-      setNewTreeName("");
+      await addCharacterList(listName, usedCharacters);
+      alert(`キャラクターリスト「${listName}」を作成しました。`);
+    } catch {
+      alert("キャラクターリストの作成に失敗しました。時間をおいて再試行してください。");
     } finally {
-      setCreatingTree(false);
+      setCreatingUsedCharacterList(false);
     }
   };
 
   const handleAddMatch = async () => {
-    if (!midP1 || !selectedTreeId) return;
+    if (!midP1 || !primaryTree) return;
     setAddingMatch(true);
     try {
-      await addMidTournamentMatch(selectedTreeId, midRound, midBracket, midP1, midP2 || null);
+      await addMidTournamentMatch(primaryTree.id, midRound, midBracket, midP1, midP2 || null);
       setMidP1("");
       setMidP2("");
     } finally {
@@ -263,6 +306,18 @@ export function TournamentSetupPage() {
             </div>
           )}
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">デフォルトプレイヤーサイド</label>
+            <select
+              value={createDefaultPlayerSide}
+              onChange={(e) => setCreateDefaultPlayerSide(e.target.value as TournamentDefaultPlayerSide)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="upper_1p">トーナメント表で上が1P(デフォルト)</option>
+              <option value="upper_2p">トーナメント表で上が2P</option>
+              <option value="random">ランダム</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
             <select
               value={createCharacterMode}
@@ -306,13 +361,6 @@ export function TournamentSetupPage() {
               </div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
-                <button
-                  type="button"
-                  onClick={() => setCreateCharacterListText(characters.map((c) => c.name).join("\n"))}
-                  className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
-                >
-                  キャラマスターを反映
-                </button>
               </div>
               <textarea
                 value={createCharacterListText}
@@ -378,6 +426,9 @@ export function TournamentSetupPage() {
               : "text-gray-400"
             }`}>{statusLabel[tournament.status]}</span>
           </p>
+          <p className="text-sm text-gray-500 mt-1">
+            デフォルトプレイヤーサイド: {getDefaultPlayerSideLabel(tournament.default_player_side ?? "upper_1p")}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {tournament.status === "setup" && !isReadOnly && (
@@ -391,9 +442,18 @@ export function TournamentSetupPage() {
             </button>
           )}
           {tournament.status === "finalized" && (
-            <button onClick={() => navigate("/tournament/bracket")} className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium">
-              🏆 ブラケットを見る
-            </button>
+            <>
+              <button
+                onClick={handleCreateUsedCharacterList}
+                disabled={creatingUsedCharacterList}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                {creatingUsedCharacterList ? "作成中..." : "使用キャラからリスト作成"}
+              </button>
+              <button onClick={() => navigate("/tournament/bracket")} className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium">
+                🏆 ブラケットを見る
+              </button>
+            </>
           )}
           <button
             onClick={() => { if (confirm("大会データをすべて削除しますか？")) removeTournament(); }}
@@ -435,6 +495,18 @@ export function TournamentSetupPage() {
                 <label htmlFor="editGfReset" className="text-sm text-gray-700">グランドファイナルリセットを有効にする</label>
               </div>
             )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">デフォルトプレイヤーサイド</label>
+              <select
+                value={editDefaultPlayerSide}
+                onChange={(e) => setEditDefaultPlayerSide(e.target.value as TournamentDefaultPlayerSide)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="upper_1p">トーナメント表で上が1P(デフォルト)</option>
+                <option value="upper_2p">トーナメント表で上が2P</option>
+                <option value="random">ランダム</option>
+              </select>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
               <select
@@ -479,13 +551,6 @@ export function TournamentSetupPage() {
                 </div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
-                  <button
-                    type="button"
-                    onClick={() => setEditCharacterListText(characters.map((c) => c.name).join("\n"))}
-                    className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
-                  >
-                    キャラマスターを反映
-                  </button>
                 </div>
                 <textarea
                   value={editCharacterListText}
@@ -741,110 +806,16 @@ export function TournamentSetupPage() {
         )}
       </div>
 
-      {/* Mid-tournament: tree management + add match */}
+      {/* Mid-tournament: add match */}
       {tournament.status === "in_progress" && !isReadOnly && (
         <div className="mt-6 space-y-4">
-          {/* ブラケットツリー一覧 */}
-          <div className="bg-white rounded-xl shadow-sm border border-amber-200 p-5">
-            <h3 className="font-semibold text-gray-700 mb-3">⚡ ブラケットツリー管理</h3>
-
-            {trees.length === 0 && (
-              <p className="text-xs text-gray-400 mb-3">ブラケットツリーがありません。</p>
-            )}
-
-            <div className="space-y-2 mb-4">
-              {trees.map((tree) => {
-                const treeMatchCount = matches.filter((m) => m.tree_id === tree.id).length;
-                const isSelected = selectedTreeId === tree.id;
-                const isEditing = editingTreeId === tree.id;
-                return (
-                  <div
-                    key={tree.id}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
-                      isSelected
-                        ? "bg-amber-50 border-amber-400"
-                        : "bg-gray-50 border-gray-200 hover:bg-amber-50"
-                    }`}
-                  >
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        value={editingTreeName}
-                        onChange={(e) => setEditingTreeName(e.target.value)}
-                        onBlur={async () => {
-                          if (editingTreeName.trim()) {
-                            await renameBracketTreeItem(tree.id, editingTreeName.trim());
-                          }
-                          setEditingTreeId(null);
-                        }}
-                        onKeyDown={async (e) => {
-                          if (e.key === "Enter") {
-                            if (editingTreeName.trim()) {
-                              await renameBracketTreeItem(tree.id, editingTreeName.trim());
-                            }
-                            setEditingTreeId(null);
-                          } else if (e.key === "Escape") {
-                            setEditingTreeId(null);
-                          }
-                        }}
-                        className="flex-1 border border-amber-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-amber-400"
-                      />
-                    ) : (
-                      <button
-                        className="flex-1 text-left font-medium text-gray-800"
-                        onClick={() => setSelectedTreeId(isSelected ? null : tree.id)}
-                      >
-                        {tree.name}
-                      </button>
-                    )}
-                    <span className="text-xs text-gray-400 shrink-0">{treeMatchCount} 試合</span>
-                    <button
-                      onClick={() => { setEditingTreeId(tree.id); setEditingTreeName(tree.name); }}
-                      className="text-xs text-gray-400 hover:text-gray-600 px-1"
-                      title="名前を変更"
-                    >✏️</button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`「${tree.name}」を削除しますか？所属する試合はツリーから切り離されます。`)) {
-                          removeBracketTree(tree.id);
-                          if (selectedTreeId === tree.id) setSelectedTreeId(null);
-                        }
-                      }}
-                      className="text-xs text-red-400 hover:text-red-600 px-1"
-                      title="削除"
-                    >✕</button>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* 新しいツリーを作成 */}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newTreeName}
-                onChange={(e) => setNewTreeName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCreateTree()}
-                placeholder={`追加ブラケット ${trees.length + 1}`}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              <button
-                onClick={handleCreateTree}
-                disabled={creatingTree}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
-              >
-                {creatingTree ? "作成中..." : "＋ ツリー作成"}
-              </button>
-            </div>
-          </div>
-
-          {/* 選択ツリーへ試合を追加 */}
-          {selectedTreeId && (
+          {/* 既定ブラケットへ試合を追加 */}
+          {primaryTree && (
             <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-5">
               <h3 className="font-semibold text-gray-700 mb-1">
-                試合を追加 — <span className="text-blue-600">{trees.find((t) => t.id === selectedTreeId)?.name}</span>
+                試合を追加 — <span className="text-blue-600">{primaryTree.name}</span>
               </h3>
-              <p className="text-xs text-gray-400 mb-4">このツリーに新しい試合を追加します。</p>
+              <p className="text-xs text-gray-400 mb-4">この大会のブラケットに新しい試合を追加します。</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">プレイヤー 1 *</label>

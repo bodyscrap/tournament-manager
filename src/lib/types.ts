@@ -54,6 +54,7 @@ export interface CharacterListRow {
 export type TournamentType = "single_elimination" | "double_elimination";
 export type TournamentStatus = "setup" | "in_progress" | "completed" | "finalized";
 export type CharacterInputMode = "free_input" | "list_selection";
+export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
 
 export interface Tournament {
   id: string;
@@ -65,6 +66,7 @@ export interface Tournament {
   character_input_mode: CharacterInputMode;
   character_list_name: string | null;
   character_list: string[];
+  default_player_side: TournamentDefaultPlayerSide;
   created_at: string;
 }
 
@@ -78,6 +80,7 @@ export interface TournamentRow {
   character_input_mode: CharacterInputMode;
   character_list_name: string | null;
   character_list_json: string | null;
+  default_player_side: TournamentDefaultPlayerSide;
   created_at: string;
 }
 
@@ -144,6 +147,7 @@ export interface RoundLockRow {
 // =====================
 export type MatchBracket = "winners" | "losers" | "grand_final" | "grand_final_reset";
 export type MatchStatus = "pending" | "in_progress" | "completed";
+export type MatchPlayerSide = "1P" | "2P" | "-";
 
 export interface Match {
   id: string;
@@ -159,8 +163,8 @@ export interface Match {
   player2_wins: number;
   player1_character_name: string | null;
   player2_character_name: string | null;
-  player1_side: "1P" | "2P";
-  player2_side: "1P" | "2P";
+  player1_side: MatchPlayerSide;
+  player2_side: MatchPlayerSide;
   status: MatchStatus;
   dq_player_id: string | null;
   next_match_id: string | null;       // winner advances here
@@ -183,8 +187,8 @@ export interface MatchRow {
   player2_wins: number;
   player1_character_name: string | null;
   player2_character_name: string | null;
-  player1_side: "1P" | "2P";
-  player2_side: "1P" | "2P";
+  player1_side: MatchPlayerSide;
+  player2_side: MatchPlayerSide;
   status: MatchStatus;
   dq_player_id: string | null;
   next_match_id: string | null;

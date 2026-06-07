@@ -16,8 +16,10 @@ import type {
   BracketTreeRow,
   MatchBracket,
   CharacterInputMode,
+  TournamentDefaultPlayerSide,
   RoundLock,
   RoundLockRow,
+  MatchPlayerSide,
 } from "./types";
 
 // ----------------------
@@ -73,6 +75,7 @@ async function initSchema(db: Database): Promise<void> {
       status             TEXT NOT NULL DEFAULT 'setup',
       grand_final_reset  INTEGER NOT NULL DEFAULT 1,
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
+      default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
       character_list_json TEXT,
       created_at         TEXT NOT NULL
     );
@@ -139,6 +142,9 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_input_mode TEXT NOT NULL DEFAULT 'free_input'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN default_player_side TEXT NOT NULL DEFAULT 'upper_1p'`);
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_list_name TEXT`);
@@ -370,6 +376,7 @@ function rowToTournament(row: TournamentRow): Tournament {
     character_input_mode: row.character_input_mode ?? "free_input",
     character_list_name: row.character_list_name ?? null,
     character_list: characterList,
+    default_player_side: row.default_player_side ?? "upper_1p",
     created_at: row.created_at,
   };
 }
@@ -417,15 +424,16 @@ export async function createTournament(
   name: string,
   character_input_mode: CharacterInputMode,
   character_list_name: string | null,
-  character_list: string[]
+  character_list: string[],
+  default_player_side: TournamentDefaultPlayerSide
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
   const listJson = character_input_mode === "list_selection" ? JSON.stringify(normalizedList) : null;
   const listName = character_input_mode === "list_selection" ? (character_list_name?.trim() || "カスタムリスト") : null;
   await db.execute(
-    `INSERT INTO tournament (id, name, type, max_participants, status, grand_final_reset, character_input_mode, character_list_name, character_list_json, created_at)
-     VALUES ($1, $2, $3, $4, 'setup', $5, $6, $7, $8, $9)`,
+    `INSERT INTO tournament (id, name, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, created_at)
+     VALUES ($1, $2, $3, $4, 'setup', $5, $6, $7, $8, $9, $10)`,
     [
       id,
       name,
@@ -433,6 +441,7 @@ export async function createTournament(
       max_participants,
       grand_final_reset ? 1 : 0,
       character_input_mode,
+      default_player_side,
       listName,
       listJson,
       new Date().toISOString(),
@@ -466,7 +475,8 @@ export async function updateTournamentSettings(
   grand_final_reset: boolean,
   character_input_mode: CharacterInputMode,
   character_list_name: string | null,
-  character_list: string[]
+  character_list: string[],
+  default_player_side: TournamentDefaultPlayerSide
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -478,10 +488,11 @@ export async function updateTournamentSettings(
          max_participants = $2,
          grand_final_reset = $3,
          character_input_mode = $4,
-         character_list_name = $5,
-         character_list_json = $6
-     WHERE id = $7`,
-    [type, max_participants, grand_final_reset ? 1 : 0, character_input_mode, listName, listJson, id]
+         default_player_side = $5,
+         character_list_name = $6,
+         character_list_json = $7
+     WHERE id = $8`,
+    [type, max_participants, grand_final_reset ? 1 : 0, character_input_mode, default_player_side, listName, listJson, id]
   );
 }
 
@@ -604,8 +615,8 @@ function rowToMatch(row: MatchRow): Match {
     player2_wins: row.player2_wins,
     player1_character_name: row.player1_character_name,
     player2_character_name: row.player2_character_name,
-    player1_side: row.player1_side ?? "1P",
-    player2_side: row.player2_side ?? "2P",
+    player1_side: row.player1_side ?? "-",
+    player2_side: row.player2_side ?? "-",
     status: row.status,
     dq_player_id: row.dq_player_id,
     next_match_id: row.next_match_id,
@@ -717,8 +728,8 @@ export async function insertMatch(match: Match): Promise<void> {
 
 export async function updateMatchSides(
   id: string,
-  player1_side: "1P" | "2P",
-  player2_side: "1P" | "2P"
+  player1_side: MatchPlayerSide,
+  player2_side: MatchPlayerSide
 ): Promise<void> {
   const db = await getDb();
   await db.execute(

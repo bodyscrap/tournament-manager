@@ -22,6 +22,8 @@ export function BracketPage() {
     setMatchCharacters,
     correctScore,
     addParticipantAndAssign,
+    swapMatchSides,
+    randomizeMatchSides,
     isRoundLocked,
     toggleRoundLock,
     swapMatchPlayers,
@@ -48,6 +50,7 @@ export function BracketPage() {
   // Add player state
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState("");
+  const [newPlayerCharacter, setNewPlayerCharacter] = useState("");
   const [newPlayerTreeId, setNewPlayerTreeId] = useState<string>("");
   const [addingPlayer, setAddingPlayer] = useState(false);
 
@@ -63,6 +66,7 @@ export function BracketPage() {
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
   const isCharacterListMode = tournament?.character_input_mode === "list_selection";
   const tournamentCharacterOptions = tournament?.character_list ?? [];
+  const maxParticipants = tournament?.max_participants ?? 0;
 
   const incomingBySlot = buildIncomingBySlot(tournamentMatches);
   const treeNameById = new Map(trees.map((t) => [t.id, t.name]));
@@ -103,6 +107,29 @@ export function BracketPage() {
 
   const isAddTargetLocked =
     !!newPlayerTreeId && isRoundLocked(newPlayerTreeId, "winners", 1);
+
+  const canAddToTree = (treeId: string) => {
+    if (isRoundLocked(treeId, "winners", 1)) return false;
+
+    const round1Matches = tournamentMatches.filter(
+      (m) => m.tree_id === treeId && m.bracket === "winners" && m.round === 1
+    );
+    const pendingByeMatch = round1Matches.find((m) => {
+      if (m.status !== "pending") return false;
+      const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
+      const isByeSlot1 = m.player1_id === null && !incoming.slot1;
+      const isByeSlot2 = m.player2_id === null && !incoming.slot2;
+      return (m.player1_id !== null && isByeSlot2) || (isByeSlot1 && m.player2_id !== null);
+    });
+    if (pendingByeMatch) return true;
+
+    const round1Capacity = round1Matches.length * 2;
+    return round1Capacity < maxParticipants;
+  };
+
+  const canOpenAddPlayer =
+    participants.length < maxParticipants &&
+    trees.some((tree) => canAddToTree(tree.id));
 
   const handleMatchClick = (match: Match) => {
     if (isReadOnly && match.status !== "completed") return;
@@ -325,6 +352,44 @@ export function BracketPage() {
     }
   };
 
+  const handleSwapSides = async () => {
+    if (!selectedMatch || isReadOnly) return;
+    setSaving(true);
+    try {
+      await swapMatchSides(selectedMatch.id);
+      setSelectedMatch((prev) =>
+        prev
+          ? {
+              ...prev,
+              player1_side: prev.player2_side,
+              player2_side: prev.player1_side,
+            }
+          : prev
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRandomizeSides = async () => {
+    if (!selectedMatch || isReadOnly) return;
+    setSaving(true);
+    try {
+      const nextSides = await randomizeMatchSides(selectedMatch.id);
+      setSelectedMatch((prev) =>
+        prev
+          ? {
+              ...prev,
+              player1_side: nextSides.player1_side,
+              player2_side: nextSides.player2_side,
+            }
+          : prev
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSetReady = async () => {
     if (!selectedMatch || isReadOnly) return;
     setSaving(true);
@@ -358,6 +423,10 @@ export function BracketPage() {
     if (!selectedMatch) return;
 
     const loserId = loserSlot === 1 ? selectedMatch.player1_id : selectedMatch.player2_id;
+    if (!loserId || loserId.startsWith("dummy-")) {
+      alert("プレイヤーがいないスロットには強制敗北を適用できません");
+      return;
+    }
     const winnerId = loserSlot === 1 ? selectedMatch.player2_id : selectedMatch.player1_id;
     const loserName = loserId ? (playerMap.get(loserId)?.name ?? loserId) : "不明";
     const winnerName = winnerId ? (playerMap.get(winnerId)?.name ?? winnerId) : "不明";
@@ -397,8 +466,14 @@ export function BracketPage() {
     }
     setAddingPlayer(true);
     try {
-      await addParticipantAndAssign(newPlayerName.trim(), "winners", newPlayerTreeId);
+      await addParticipantAndAssign(
+        newPlayerName.trim(),
+        newPlayerCharacter.trim() || null,
+        "winners",
+        newPlayerTreeId
+      );
       setNewPlayerName("");
+      setNewPlayerCharacter("");
       setShowAddPlayer(false);
     } catch (e) {
       alert(e instanceof Error ? e.message : "プレイヤー追加に失敗しました");
@@ -527,9 +602,11 @@ export function BracketPage() {
           {tournament.status === "in_progress" && !isReadOnly && (
             <button
               onClick={() => {
+                if (!canOpenAddPlayer) return;
                 setNewPlayerTreeId(defaultTreeId);
                 setShowAddPlayer((v) => !v);
               }}
+              disabled={!canOpenAddPlayer}
               className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
             >
               ＋ プレイヤー追加
@@ -573,10 +650,36 @@ export function BracketPage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-blue-700">追加先</label>
-              <div className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white text-blue-900">
-                ウィナーズ Round 1 固定
-              </div>
+              <label className="text-xs text-blue-700">使用キャラ</label>
+              {isCharacterListMode ? (
+                <select
+                  value={newPlayerCharacter}
+                  onChange={(e) => setNewPlayerCharacter(e.target.value)}
+                  className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 w-48"
+                >
+                  <option value="">使用キャラを選択</option>
+                  {tournamentCharacterOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={newPlayerCharacter}
+                    onChange={(e) => setNewPlayerCharacter(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddPlayer()}
+                    list="character-master-options-bracket-add-player"
+                    placeholder="任意（候補から選択 or 自由入力）"
+                    className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-48"
+                  />
+                  <datalist id="character-master-options-bracket-add-player">
+                    {characters.map((c) => (
+                      <option key={c.id} value={c.name} />
+                    ))}
+                  </datalist>
+                </>
+              )}
             </div>
             {trees.length > 1 && (
               <div className="flex flex-col gap-1">
@@ -594,7 +697,14 @@ export function BracketPage() {
             )}
             <button
               onClick={handleAddPlayer}
-              disabled={addingPlayer || !newPlayerName.trim() || !newPlayerTreeId || participants.length >= tournament.max_participants || isAddTargetLocked}
+              disabled={
+                addingPlayer ||
+                !newPlayerName.trim() ||
+                !newPlayerTreeId ||
+                participants.length >= tournament.max_participants ||
+                isAddTargetLocked ||
+                (isCharacterListMode && !newPlayerCharacter.trim())
+              }
               className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50"
             >
               {addingPlayer ? "追加中..." : "追加"}
@@ -718,7 +828,7 @@ export function BracketPage() {
       {/* Match detail panel */}
       {selectedMatch && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6">
             <h3 className="font-bold text-gray-800 mb-4 text-center">
               {selectedMatch.bracket === "grand_final"
                 ? "グランドファイナル"
@@ -806,6 +916,10 @@ export function BracketPage() {
                     slot1: false,
                     slot2: false,
                   };
+                  const sidePending = getUiMatchState(selectedMatch, incomingBySlot) === "undecided";
+                  const p1SideLabel = sidePending ? "-" : selectedMatch.player1_side;
+                  const p2SideLabel = sidePending ? "-" : selectedMatch.player2_side;
+                  const canEditSides = !isReadOnly && getUiMatchState(selectedMatch, incomingBySlot) === "ready";
                   return (
                     <>
                 {isReadOnly ? (
@@ -814,8 +928,29 @@ export function BracketPage() {
                   </div>
                 ) : (
                   <div className="space-y-3 mb-4">
+                    {canEditSides && (
+                      <div className="grid grid-cols-2 gap-2 mb-1">
+                        <button
+                          onClick={handleSwapSides}
+                          disabled={saving}
+                          className="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-medium disabled:opacity-50"
+                        >
+                          1P / 2P 入れ替え
+                        </button>
+                        <button
+                          onClick={handleRandomizeSides}
+                          disabled={saving}
+                          className="px-3 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-lg text-xs font-medium disabled:opacity-50"
+                        >
+                          1P / 2P ランダム決定
+                        </button>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
-                      <span className="w-28 text-sm font-medium text-gray-700 truncate">
+                      <span className={`shrink-0 inline-flex items-center justify-center w-10 rounded border px-1 py-0.5 text-[10px] font-bold ${p1SideLabel === "-" ? "border-gray-300 bg-gray-100 text-gray-500" : p1SideLabel === "1P" ? "border-blue-200 bg-blue-100 text-blue-700" : "border-indigo-200 bg-indigo-100 text-indigo-700"}`}>
+                        {p1SideLabel}
+                      </span>
+                      <span className="flex-1 min-w-0 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player1_id, incoming.slot1)}
                       </span>
                       {isCharacterListMode ? (
@@ -823,7 +958,7 @@ export function BracketPage() {
                           value={p1CharName}
                           onChange={(e) => setP1CharName(e.target.value)}
                           disabled={!selectedMatch.player1_id}
-                          className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                          className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
                         >
                           <option value="">キャラ未設定</option>
                           {tournamentCharacterOptions.map((name) => (
@@ -837,7 +972,7 @@ export function BracketPage() {
                             onChange={(e) => setP1CharName(e.target.value)}
                             disabled={!selectedMatch.player1_id}
                             list="character-master-options-match-p1"
-                            className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                            className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
                             placeholder="キャラ未設定"
                           />
                           <datalist id="character-master-options-match-p1">
@@ -861,7 +996,7 @@ export function BracketPage() {
                       <div className="ml-auto flex items-center gap-1">
                         <button
                           onClick={() => applyForcedLoss(1)}
-                          disabled={!selectedMatch.player1_id || !selectedMatch.player2_id}
+                          disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
                           className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
                         >強制敗北</button>
                         <button
@@ -874,7 +1009,10 @@ export function BracketPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-28 text-sm font-medium text-gray-700 truncate">
+                      <span className={`shrink-0 inline-flex items-center justify-center w-10 rounded border px-1 py-0.5 text-[10px] font-bold ${p2SideLabel === "-" ? "border-gray-300 bg-gray-100 text-gray-500" : p2SideLabel === "2P" ? "border-indigo-200 bg-indigo-100 text-indigo-700" : "border-blue-200 bg-blue-100 text-blue-700"}`}>
+                        {p2SideLabel}
+                      </span>
+                      <span className="flex-1 min-w-0 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player2_id, incoming.slot2)}
                       </span>
                       {isCharacterListMode ? (
@@ -882,7 +1020,7 @@ export function BracketPage() {
                           value={p2CharName}
                           onChange={(e) => setP2CharName(e.target.value)}
                           disabled={!selectedMatch.player2_id}
-                          className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                          className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
                         >
                           <option value="">キャラ未設定</option>
                           {tournamentCharacterOptions.map((name) => (
@@ -896,7 +1034,7 @@ export function BracketPage() {
                             onChange={(e) => setP2CharName(e.target.value)}
                             disabled={!selectedMatch.player2_id}
                             list="character-master-options-match-p2"
-                            className="w-28 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
+                            className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
                             placeholder="キャラ未設定"
                           />
                           <datalist id="character-master-options-match-p2">
@@ -920,7 +1058,7 @@ export function BracketPage() {
                       <div className="ml-auto flex items-center gap-1">
                         <button
                           onClick={() => applyForcedLoss(2)}
-                          disabled={!selectedMatch.player1_id || !selectedMatch.player2_id}
+                          disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
                           className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
                         >強制敗北</button>
                         <button

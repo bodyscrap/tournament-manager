@@ -74,7 +74,9 @@ import type {
   CharacterInputMode,
   TournamentType,
   TournamentStatus,
+  TournamentDefaultPlayerSide,
   RoundLock,
+  MatchPlayerSide,
 } from "../lib/types";
 
 // -------------------------------------------------------
@@ -128,7 +130,8 @@ interface AppContextValue {
     name: string,
     character_input_mode: CharacterInputMode,
     character_list_name: string | null,
-    character_list: string[]
+    character_list: string[],
+    default_player_side: TournamentDefaultPlayerSide
   ) => Promise<void>;
   removeTournament: (id?: string) => Promise<void>;
   addParticipant: (
@@ -150,7 +153,8 @@ interface AppContextValue {
     grand_final_reset: boolean,
     character_input_mode: CharacterInputMode,
     character_list_name: string | null,
-    character_list: string[]
+    character_list: string[],
+    default_player_side: TournamentDefaultPlayerSide
   ) => Promise<void>;
 
   // Bracket trees
@@ -182,6 +186,7 @@ interface AppContextValue {
   ) => Promise<void>;
   addParticipantAndAssign: (
     name: string,
+    character_name: string | null,
     bracket: MatchBracket,
     treeId: string
   ) => Promise<void>;
@@ -201,7 +206,7 @@ interface AppContextValue {
     player2_character_name: string | null
   ) => Promise<void>;
   swapMatchSides: (match_id: string) => Promise<void>;
-  randomizeMatchSides: (match_id: string) => Promise<void>;
+  randomizeMatchSides: (match_id: string) => Promise<{ player1_side: "1P" | "2P"; player2_side: "1P" | "2P" }>;
   recordScore: (
     match: Match,
     player1_wins: number,
@@ -302,6 +307,50 @@ function sanitizeCharacterByTournament(
   return tournament.character_list.includes(normalized) ? normalized : null;
 }
 
+function resolveDefaultMatchSides(
+  default_player_side: TournamentDefaultPlayerSide
+): { player1_side: "1P" | "2P"; player2_side: "1P" | "2P" } {
+  if (default_player_side === "upper_2p") {
+    return { player1_side: "2P", player2_side: "1P" };
+  }
+  if (default_player_side === "random") {
+    return Math.random() < 0.5
+      ? { player1_side: "1P", player2_side: "2P" }
+      : { player1_side: "2P", player2_side: "1P" };
+  }
+  return { player1_side: "1P", player2_side: "2P" };
+}
+
+function applyDefaultMatchSides(match: Match, default_player_side: TournamentDefaultPlayerSide): Match {
+  return {
+    ...match,
+    ...resolveDefaultMatchSides(default_player_side),
+  };
+}
+
+async function syncPendingMatchSides(tournament: Tournament): Promise<void> {
+  const allMatches = await getMatchesByTournament(tournament.id);
+  const incomingBySlot = buildIncomingBySlot(allMatches);
+
+  for (const m of allMatches) {
+    if (m.status !== "pending") continue;
+
+    const uiState = getUiMatchState(m, incomingBySlot);
+    if (uiState === "undecided") {
+      if (m.player1_side !== "-" || m.player2_side !== "-") {
+        await updateMatchSides(m.id, "-", "-");
+      }
+      continue;
+    }
+
+    const hasUnsetSide = m.player1_side === "-" || m.player2_side === "-";
+    if (!hasUnsetSide) continue;
+
+    const nextSides = resolveDefaultMatchSides(tournament.default_player_side);
+    await updateMatchSides(m.id, nextSides.player1_side, nextSides.player2_side);
+  }
+}
+
 function validateRequiredCharacterSelection(
   tournament: Tournament,
   character_name: string | null,
@@ -353,6 +402,16 @@ function resolveMatchOutcome(
   const slot2IsBye = p2Id === null && !incoming.slot2;
   const p1IsReal = !!p1Id && !isDummyPlayerId(p1Id);
   const p2IsReal = !!p2Id && !isDummyPlayerId(p2Id);
+
+  // 両側とも BYE なら、0-0 のまま自動完了扱いにする。
+  if (slot1IsBye && slot2IsBye) {
+    return {
+      status: "completed",
+      winner_id: null,
+      loser_id: null,
+      dq_player_id: null,
+    };
+  }
 
   // 両者DQは勝者なしで試合完了。次ラウンド側は BYE/TBD 扱いにする。
   if (p1Dq && p2Dq) {
@@ -497,6 +556,95 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCharacterLists(data);
   }, []);
 
+  const repairDoubleElimGrandFinal = useCallback(
+    async (t: Tournament, allMatches: Match[]): Promise<boolean> => {
+      if (t.type !== "double_elimination") return false;
+
+      const treeIds = new Set(allMatches.map((m) => m.tree_id));
+      let changed = false;
+
+      for (const treeId of treeIds) {
+        const scoped = allMatches.filter((m) => m.tree_id === treeId);
+        const grandFinal = scoped.find((m) => m.bracket === "grand_final");
+        if (!grandFinal) continue;
+
+        const winnersFinal = [...scoped]
+          .filter((m) => m.bracket === "winners")
+          .sort((a, b) => b.round - a.round || b.position - a.position)[0];
+        const losersFinal = [...scoped]
+          .filter((m) => m.bracket === "losers")
+          .sort((a, b) => b.round - a.round || b.position - a.position)[0];
+
+        if (
+          winnersFinal &&
+          (winnersFinal.next_match_id !== grandFinal.id || winnersFinal.next_match_slot !== 1)
+        ) {
+          await updateMatchProgressionLinks(
+            winnersFinal.id,
+            grandFinal.id,
+            1,
+            winnersFinal.loser_next_match_id,
+            winnersFinal.loser_next_match_slot
+          );
+          changed = true;
+        }
+
+        if (
+          losersFinal &&
+          (losersFinal.next_match_id !== grandFinal.id || losersFinal.next_match_slot !== 2)
+        ) {
+          await updateMatchProgressionLinks(
+            losersFinal.id,
+            grandFinal.id,
+            2,
+            losersFinal.loser_next_match_id,
+            losersFinal.loser_next_match_slot
+          );
+          changed = true;
+        }
+
+        if (winnersFinal?.status === "completed" && winnersFinal.winner_id) {
+          const winnerCharacterName =
+            winnersFinal.winner_id === winnersFinal.player1_id
+              ? winnersFinal.player1_character_name
+              : winnersFinal.winner_id === winnersFinal.player2_id
+              ? winnersFinal.player2_character_name
+              : null;
+          if (grandFinal.player1_id !== winnersFinal.winner_id) {
+            await updateMatchPlayerWithCharacter(
+              grandFinal.id,
+              1,
+              winnersFinal.winner_id,
+              winnerCharacterName ?? null
+            );
+            changed = true;
+          }
+        }
+
+        if (losersFinal?.status === "completed" && losersFinal.winner_id) {
+          const winnerCharacterName =
+            losersFinal.winner_id === losersFinal.player1_id
+              ? losersFinal.player1_character_name
+              : losersFinal.winner_id === losersFinal.player2_id
+              ? losersFinal.player2_character_name
+              : null;
+          if (grandFinal.player2_id !== losersFinal.winner_id) {
+            await updateMatchPlayerWithCharacter(
+              grandFinal.id,
+              2,
+              losersFinal.winner_id,
+              winnerCharacterName ?? null
+            );
+            changed = true;
+          }
+        }
+      }
+
+      return changed;
+    },
+    []
+  );
+
   // Load a specific tournament's data by id
   const loadTournamentData = useCallback(async (id: string | null) => {
     if (!id) {
@@ -510,12 +658,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const t = await getTournamentById(id);
     setTournament(t);
     if (t) {
-      const [p, m, tr, rl] = await Promise.all([
+      const [p, loadedMatches, tr, rl] = await Promise.all([
         getTournamentPlayers(t.id),
         getMatchesByTournament(t.id),
         getBracketTrees(t.id),
         getRoundLocks(t.id),
       ]);
+
+      const repaired = await repairDoubleElimGrandFinal(t, loadedMatches);
+      const m = repaired ? await getMatchesByTournament(t.id) : loadedMatches;
+
       setParticipants(p);
       setMatches(m);
       setTrees(tr);
@@ -527,7 +679,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setTrees([]);
       setRoundLocks([]);
     }
-  }, []);
+  }, [repairDoubleElimGrandFinal]);
 
   const fetchTournament = useCallback(async () => {
     const [list] = await Promise.all([
@@ -680,7 +832,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       name: string,
       character_input_mode: CharacterInputMode,
       character_list_name: string | null,
-      character_list: string[]
+      character_list: string[],
+      default_player_side: TournamentDefaultPlayerSide
     ) => {
       const id = uuidv4();
       await createTournament(
@@ -691,7 +844,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         name,
         character_input_mode,
         character_list_name,
-        normalizeCharacterList(character_list)
+        normalizeCharacterList(character_list),
+        default_player_side
       );
       activeTournamentIdRef.current = id;
       localStorage.setItem("activeTournamentId", id);
@@ -826,7 +980,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tournament.grand_final_reset,
       tournament.character_input_mode,
       tournament.character_list_name,
-      tournament.character_list
+      tournament.character_list,
+      tournament.default_player_side
     );
 
     await deleteMatchesByTournament(tournament.id);
@@ -851,8 +1006,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : generateDoubleElimination(tournament.id, playerIds, treeId);
 
     for (const m of newMatches) {
-      await insertMatch(m);
+      await insertMatch(applyDefaultMatchSides(m, tournament.default_player_side));
     }
+    await syncPendingMatchSides(tournament);
     await updateTournamentStatus(tournament.id, "in_progress");
     await fetchTournament();
   }, [tournament, fetchTournament]);
@@ -867,7 +1023,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         enabled,
         tournament.character_input_mode,
         tournament.character_list_name,
-        tournament.character_list
+        tournament.character_list,
+        tournament.default_player_side
       );
       await fetchTournament();
     },
@@ -881,7 +1038,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       grand_final_reset: boolean,
       character_input_mode: CharacterInputMode,
       character_list_name: string | null,
-      character_list: string[]
+      character_list: string[],
+      default_player_side: TournamentDefaultPlayerSide
     ) => {
       if (!tournament) return;
       await updateTournamentSettingsDb(
@@ -891,7 +1049,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         grand_final_reset,
         character_input_mode,
         character_list_name,
-        normalizeCharacterList(character_list)
+        normalizeCharacterList(character_list),
+        default_player_side
       );
       await fetchTournament();
     },
@@ -915,20 +1074,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const incomingBySlot = buildIncomingBySlot(matches);
     if (getUiMatchState(target, incomingBySlot) !== "ready") return;
 
+    let nextP1Side: MatchPlayerSide = target.player1_side;
+    let nextP2Side: MatchPlayerSide = target.player2_side;
+    if (nextP1Side === "-" || nextP2Side === "-") {
+      const resolvedSides = resolveDefaultMatchSides(tournament?.default_player_side ?? "upper_1p");
+      nextP1Side = resolvedSides.player1_side;
+      nextP2Side = resolvedSides.player2_side;
+      await updateMatchSides(match_id, nextP1Side, nextP2Side);
+    }
+
     await updateMatchStatus(match_id, "in_progress");
     // Refresh matches list
     setMatches((prev) =>
       prev.map((m) =>
-        m.id === match_id ? { ...m, status: "in_progress" } : m
+        m.id === match_id
+          ? {
+              ...m,
+              status: "in_progress",
+              player1_side: nextP1Side,
+              player2_side: nextP2Side,
+            }
+          : m
       )
     );
-  }, [matches]);
+  }, [matches, tournament]);
 
   const setMatchReady = useCallback(async (match_id: string) => {
     const target = matches.find((m) => m.id === match_id);
     if (!target || target.status !== "in_progress") return;
 
     await resetMatchToPending(match_id);
+    const nextSides = resolveDefaultMatchSides(tournament?.default_player_side ?? "upper_1p");
+    await updateMatchSides(match_id, nextSides.player1_side, nextSides.player2_side);
     setMatches((prev) =>
       prev.map((m) =>
         m.id === match_id
@@ -939,6 +1116,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               player2_wins: 0,
               winner_id: null,
               dq_player_id: null,
+              player1_side: nextSides.player1_side,
+              player2_side: nextSides.player2_side,
             }
           : m
       )
@@ -1001,7 +1180,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const randomizeMatchSides = useCallback(async (match_id: string) => {
     const target = matches.find((m) => m.id === match_id);
-    if (!target) return;
+    if (!target) {
+      return { player1_side: "1P" as const, player2_side: "2P" as const };
+    }
 
     const keepDefault = Math.random() < 0.5;
     const nextP1Side: "1P" | "2P" = keepDefault ? "1P" : "2P";
@@ -1014,6 +1195,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : m
       )
     );
+    return { player1_side: nextP1Side, player2_side: nextP2Side };
   }, [matches]);
 
   const recordScore = useCallback(
@@ -1112,9 +1294,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             match.player2_id,
             match.player1_id
           );
-          await insertMatch(resetMatch);
+          await insertMatch(applyDefaultMatchSides(resetMatch, tournament.default_player_side));
         }
       }
+
+      await syncPendingMatchSides(tournament);
 
       // Check if tournament is complete (no more non-completed matches with both players)
       if (status === "completed") {
@@ -1138,6 +1322,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addBracketTree = useCallback(
     async (name: string): Promise<string> => {
       if (!tournament) return "";
+      const existingTreeId = trees[0]?.id;
+      if (existingTreeId) {
+        if (name.trim() && name.trim() !== trees[0]?.name) {
+          await renameBracketTree(existingTreeId, name.trim());
+          await fetchTournament();
+        }
+        return existingTreeId;
+      }
       const id = uuidv4();
       await insertBracketTree({
         id,
@@ -1148,7 +1340,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await fetchTournament();
       return id;
     },
-    [tournament, fetchTournament]
+    [tournament, trees, fetchTournament]
   );
 
   const renameBracketTreeItem = useCallback(
@@ -1193,8 +1385,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         player2_wins: 0,
         player1_character_name: null,
         player2_character_name: null,
-        player1_side: "1P",
-        player2_side: "2P",
+        player1_side: "-",
+        player2_side: "-",
         status: "pending",
         dq_player_id: null,
         next_match_id: null,
@@ -1202,7 +1394,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         loser_next_match_id: null,
         loser_next_match_slot: null,
       };
-      await insertMatch(match);
+      await insertMatch(applyDefaultMatchSides(match, tournament.default_player_side));
+      await syncPendingMatchSides(tournament);
       await fetchTournament();
     },
     [tournament, matches, fetchTournament]
@@ -1321,12 +1514,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             match.player2_id,
             match.player1_id
           );
-          await insertMatch(resetMatch);
+          await insertMatch(applyDefaultMatchSides(resetMatch, tournament.default_player_side));
         }
       } else {
         // Winner unchanged — just update the scores
         await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
       }
+
+      await syncPendingMatchSides(tournament);
 
       // Re-sync tournament completion status
       const remaining = await getMatchesByTournament(tournament.id);
@@ -1345,7 +1540,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addParticipantAndAssign = useCallback(
-    async (name: string, bracket: MatchBracket, treeId: string) => {
+    async (name: string, character_name: string | null, bracket: MatchBracket, treeId: string) => {
       if (!tournament) return;
       if (bracket !== "winners") {
         throw new Error("途中参加はウィナーズ Round 1 のみ対応しています");
@@ -1357,9 +1552,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         throw new Error("参加者上限に達しているため追加できません");
       }
 
+      const sanitizedCharacter = validateRequiredCharacterSelection(
+        tournament,
+        character_name,
+        name
+      );
+
       const playerId = uuidv4();
       const nextSeed = p.length + 1;
-      await addTournamentPlayer(tournament.id, playerId, nextSeed, name, null, {});
+      await addTournamentPlayer(tournament.id, playerId, nextSeed, name, sanitizedCharacter, {});
 
       const assignmentBracket: MatchBracket = "winners";
 
@@ -1372,65 +1573,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (isRoundLocked(treeId, assignmentBracket, targetRound)) {
         throw new Error(`Round ${targetRound} は確定済みのため追加できません`);
-      }
-
-      // Reopen an auto-BYE completed match first (one real player, 0-0, no DQ).
-      // This prevents creating an extra Round 1 BYE match when a late player joins.
-      const autoByeCompleted = scoped
-        .filter((m) => {
-          if (m.round !== targetRound) return false;
-          const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
-          const isByeSlot1 = m.player1_id === null && !incoming.slot1;
-          const isByeSlot2 = m.player2_id === null && !incoming.slot2;
-          const oneSideOnly =
-            (m.player1_id !== null && isByeSlot2) ||
-            (isByeSlot1 && m.player2_id !== null);
-          const lonePlayer = m.player1_id ?? m.player2_id;
-          return (
-            m.status === "completed" &&
-            oneSideOnly &&
-            m.winner_id !== null &&
-            m.winner_id === lonePlayer &&
-            m.player1_wins === 0 &&
-            m.player2_wins === 0 &&
-            m.dq_player_id === null
-          );
-        })
-        .sort((a, b) => a.round - b.round || a.position - b.position)[0];
-
-      if (autoByeCompleted) {
-        const emptySlot = autoByeCompleted.player1_id === null ? 1 : 2;
-        const autoAdvancedPlayerId =
-          autoByeCompleted.player1_id ?? autoByeCompleted.player2_id;
-
-        await updateMatchPlayer(autoByeCompleted.id, emptySlot, playerId);
-        await updateMatchScore(autoByeCompleted.id, 0, 0, "pending", null, null);
-
-        if (
-          autoAdvancedPlayerId &&
-          autoByeCompleted.next_match_id &&
-          autoByeCompleted.next_match_slot
-        ) {
-          const downstream = currentMatches.find(
-            (m) => m.id === autoByeCompleted.next_match_id
-          );
-          if (downstream) {
-            const slotValue =
-              autoByeCompleted.next_match_slot === 1
-                ? downstream.player1_id
-                : downstream.player2_id;
-            if (slotValue === autoAdvancedPlayerId) {
-              await updateMatchPlayer(
-                autoByeCompleted.next_match_id,
-                autoByeCompleted.next_match_slot as 1 | 2,
-                null
-              );
-            }
-          }
-        }
-
-        await fetchTournament();
-        return;
       }
 
       const pending = currentMatches.filter(
@@ -1455,8 +1597,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const incoming = incomingBySlot.get(byeMatch.id) ?? { slot1: false, slot2: false };
         const slot = byeMatch.player1_id === null && !incoming.slot1 ? 1 : 2;
         await updateMatchPlayer(byeMatch.id, slot, playerId);
+        await syncPendingMatchSides(tournament);
         await fetchTournament();
         return;
+      }
+
+      const round1Capacity = scoped.filter((m) => m.round === targetRound).length * 2;
+      if (round1Capacity >= tournament.max_participants) {
+        throw new Error("Round 1 の空き枠がないため追加できません");
       }
 
       // No BYE — create a new pending match for this player
@@ -1476,8 +1624,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         player2_wins: 0,
         player1_character_name: null,
         player2_character_name: null,
-        player1_side: "1P",
-        player2_side: "2P",
+        player1_side: "-",
+        player2_side: "-",
         status: "pending",
         dq_player_id: null,
         next_match_id: null,
@@ -1485,7 +1633,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         loser_next_match_id: null,
         loser_next_match_slot: null,
       };
-      await insertMatch(match);
+      await insertMatch(applyDefaultMatchSides(match, tournament.default_player_side));
 
       const all = [...currentMatches, match];
 
@@ -1514,8 +1662,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           player2_wins: 0,
           player1_character_name: null,
           player2_character_name: null,
-          player1_side: "1P",
-          player2_side: "2P",
+          player1_side: "-",
+          player2_side: "-",
           status: "pending",
           dq_player_id: null,
           next_match_id: null,
@@ -1523,7 +1671,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           loser_next_match_id: null,
           loser_next_match_slot: null,
         };
-        await insertMatch(created);
+        await insertMatch(applyDefaultMatchSides(created, tournament.default_player_side));
         byKey.set(key, created);
         all.push(created);
         return created;
@@ -1598,7 +1746,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
 
           for (const cm of currentRound) {
-            const nextPos = b === "losers" && r % 2 === 1 && r !== 1
+            const nextPos = b === "losers" && r % 2 === 1
               ? cm.position
               : Math.floor(cm.position / 2);
             const slot = b === "losers" && (r === 1 || (r % 2 === 1 && r !== 1))
@@ -1630,6 +1778,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await expandBracket("losers", 1);
       }
 
+      await syncPendingMatchSides(tournament);
       await fetchTournament();
     },
     [tournament, fetchTournament, isRoundLocked]
