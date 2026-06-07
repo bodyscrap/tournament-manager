@@ -1,8 +1,12 @@
+import { useMemo, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { SafeQRCode } from "../components/common/SafeQRCode";
+import { exportA4SheetImages, exportSingleCardImage, type ExportCardItem } from "../lib/cardExport";
 
 export function TournamentPlayerCardsPage() {
-  const { tournament, participants } = useAppContext();
+  const { tournament, participants, admins } = useAppContext();
+  const [savingSingleId, setSavingSingleId] = useState<string | null>(null);
+  const [savingSheets, setSavingSheets] = useState(false);
 
   if (!tournament) {
     return (
@@ -16,6 +20,82 @@ export function TournamentPlayerCardsPage() {
 
   const sorted = [...participants].sort((a, b) => a.seed - b.seed);
 
+  const allSheetItems = useMemo<ExportCardItem[]>(() => {
+    const participantItems = [...participants]
+      .sort((a, b) => a.seed - b.seed)
+      .map((p) => ({
+        entityType: "participant" as const,
+        id: `participant:${p.player_id}`,
+        name: p.name,
+        userCode: p.player_code,
+        tournamentCode: tournament.tournament_code,
+        tournamentName: tournament.name,
+        qrPayload: JSON.stringify({
+          entity_type: "participant",
+          tournament_id: tournament.id,
+          tournament_name: tournament.name,
+          tournament_code: tournament.tournament_code,
+          player_id: p.player_id,
+          player_id_4: p.player_id_4,
+          player_name: p.name,
+          player_code: p.player_code,
+          character_name: p.character_name,
+          attributes: p.attributes,
+        }),
+      }));
+
+    const adminItems = [...admins]
+      .sort((a, b) => a.admin_sequence - b.admin_sequence)
+      .map((a) => ({
+        entityType: "admin" as const,
+        id: `admin:${a.admin_id}`,
+        name: a.name,
+        userCode: a.admin_code,
+        tournamentCode: tournament.tournament_code,
+        tournamentName: tournament.name,
+        qrPayload: JSON.stringify({
+          entity_type: "admin",
+          tournament_id: tournament.id,
+          tournament_name: tournament.name,
+          tournament_code: tournament.tournament_code,
+          admin_id: a.admin_id,
+          admin_id_4: a.admin_id_4,
+          admin_name: a.name,
+          admin_code: a.admin_code,
+          attributes: a.attributes,
+        }),
+      }));
+
+    return [...participantItems, ...adminItems];
+  }, [participants, admins, tournament]);
+
+  const handleSaveSingle = async (item: ExportCardItem) => {
+    setSavingSingleId(item.id);
+    try {
+      await exportSingleCardImage(item);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "カード画像の保存に失敗しました");
+    } finally {
+      setSavingSingleId(null);
+    }
+  };
+
+  const handleSaveSheets = async () => {
+    if (allSheetItems.length === 0) {
+      alert("出力対象がありません。");
+      return;
+    }
+
+    setSavingSheets(true);
+    try {
+      await exportA4SheetImages(allSheetItems, tournament.name);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "A4シート画像の保存に失敗しました");
+    } finally {
+      setSavingSheets(false);
+    }
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-5">
@@ -23,6 +103,16 @@ export function TournamentPlayerCardsPage() {
         <p className="text-sm text-gray-500 mt-1">
           大会: {tournament.name} / コード: <span className="font-mono">{tournament.tournament_code}</span>
         </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={handleSaveSheets}
+            disabled={savingSheets || allSheetItems.length === 0}
+            className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50"
+          >
+            {savingSheets ? "生成中..." : "全参加者+全管理者をA4シート画像で保存"}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">A4中央90%領域に5行×2列で配置し、10件ごとに1枚のPNGを保存します。</p>
       </div>
 
       {sorted.length === 0 ? (
@@ -60,6 +150,11 @@ export function TournamentPlayerCardsPage() {
                 <div className="mt-3">
                   <p className="text-xs text-gray-500">プレイヤーコード</p>
                   <p className="font-mono text-sm text-gray-800 break-all">{p.player_code || "(未発行)"}</p>
+                  <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                    大会コード: <span className="font-mono">{tournament.tournament_code}</span>
+                    <br />
+                    大会名: {tournament.name}
+                  </p>
                 </div>
 
                 {p.character_name && (
@@ -71,6 +166,24 @@ export function TournamentPlayerCardsPage() {
                 <div className="mt-3 p-3 bg-gray-50 rounded-lg flex items-center justify-center">
                   <SafeQRCode value={qrData} size={132} />
                 </div>
+
+                <button
+                  onClick={() =>
+                    handleSaveSingle({
+                      entityType: "participant",
+                      id: `participant:${p.player_id}`,
+                      name: p.name,
+                      userCode: p.player_code,
+                      tournamentCode: tournament.tournament_code,
+                      tournamentName: tournament.name,
+                      qrPayload: qrData,
+                    })
+                  }
+                  disabled={savingSingleId !== null}
+                  className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+                >
+                  {savingSingleId === `participant:${p.player_id}` ? "保存中..." : "画像保存"}
+                </button>
 
                 {Object.keys(p.attributes).length > 0 && (
                   <div className="mt-3 border-t border-gray-100 pt-2">

@@ -7,7 +7,7 @@ const navItems = [
   { to: "/tournament/setup", label: "大会管理", icon: "⚙️" },
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
   { to: "/tournament/player-cards", label: "参加者カード", icon: "🪪" },
-  { to: "/tournament/admins", label: "管理者リスト", icon: "🛡️" },
+  { to: "/tournament/admins", label: "管理者カード", icon: "🛡️" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -30,8 +30,8 @@ export function Sidebar() {
   return (
     <aside className="w-56 shrink-0 bg-gray-900 text-white flex flex-col min-h-screen">
       <div className="px-4 py-5 border-b border-gray-700">
-        <h1 className="text-lg font-bold tracking-wide">🎮 トーナメント</h1>
-        <p className="text-xs text-gray-400 mt-0.5">管理システム</p>
+        <h1 className="text-lg font-bold tracking-wide">🥫 サバ管</h1>
+        <p className="text-xs text-gray-400 mt-0.5">選択中の大会</p>
         {tournament && (
           <div className="mt-3 px-2 py-2 bg-gray-800 rounded-lg">
             <p className="text-xs text-white font-medium truncate">{tournament.name}</p>

@@ -464,7 +464,7 @@ export function TournamentSetupPage() {
             onClick={() => navigate("/tournament/admins")}
             className="text-xs px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-lg"
           >
-            🛡️ 管理者リスト
+            🛡️ 管理者カード
           </button>
           {tournament.status === "setup" && !isReadOnly && (
             <button onClick={handleOpenSettings} className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg">
