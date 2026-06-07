@@ -237,7 +237,6 @@ export function BracketPage() {
     trees.some((tree) => canAddToTree(tree.id));
 
   const handleMatchClick = (match: Match) => {
-    if (isReadOnly && match.status !== "completed") return;
     setSelectedMatch(match);
     setP1Wins(match.player1_wins);
     setP2Wins(match.player2_wins);
@@ -621,6 +620,13 @@ export function BracketPage() {
   const getPlayerName = (id: string | null, hasIncomingFeeder = false) => {
     if (!id) return hasIncomingFeeder ? "TBD" : "BYE";
     return playerMap.get(id)?.name ?? id.slice(0, 8) + "…";
+  };
+
+  const formatDateTime = (value: string | null | undefined) => {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString("ja-JP", { hour12: false });
   };
 
   const handleAddPlayer = async () => {
@@ -1010,7 +1016,7 @@ export function BracketPage() {
                     ? "TBD"
                     : "BYE";
                   const uiState = getUiMatchState(m, incomingBySlot);
-                  const canOpen = !isReadOnly || m.status === "completed";
+                  const canOpen = true;
 
                   return (
                     <div key={m.id} className="p-3 flex items-center justify-between gap-3">
@@ -1136,8 +1142,37 @@ export function BracketPage() {
                   return (
                     <>
                 {isReadOnly ? (
-                  <div className="text-center text-sm text-gray-500 mb-4">
-                    この試合は完了しています
+                  <div className="space-y-3 mb-4">
+                    <div className="text-center text-sm text-gray-500">
+                      閲覧モード（編集不可）
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">結果確定時刻</p>
+                      <p className="text-sm text-gray-800 font-medium">{formatDateTime(selectedMatch.result_finalized_at)}</p>
+                    </div>
+
+                    <div className="space-y-2 rounded-lg border border-gray-200 p-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium text-gray-700">
+                          {getPlayerName(selectedMatch.player1_id, incoming.slot1)}
+                        </span>
+                        <span className="font-mono text-gray-600">{selectedMatch.player1_wins}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 -mt-1">
+                        使用キャラ: {selectedMatch.player1_character_name?.trim() || "-"}
+                      </p>
+
+                      <div className="flex items-center justify-between text-sm mt-2">
+                        <span className="font-medium text-gray-700">
+                          {getPlayerName(selectedMatch.player2_id, incoming.slot2)}
+                        </span>
+                        <span className="font-mono text-gray-600">{selectedMatch.player2_wins}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 -mt-1">
+                        使用キャラ: {selectedMatch.player2_character_name?.trim() || "-"}
+                      </p>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3 mb-4">

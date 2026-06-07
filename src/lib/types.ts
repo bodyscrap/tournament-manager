@@ -228,6 +228,7 @@ export interface Match {
   player1_side: MatchPlayerSide;
   player2_side: MatchPlayerSide;
   status: MatchStatus;
+  result_finalized_at?: string | null;
   dq_player_id: string | null;
   next_match_id: string | null;       // winner advances here
   next_match_slot: number | null;     // 1 or 2 — which slot (player1 or player2) in next_match
@@ -252,6 +253,7 @@ export interface MatchRow {
   player1_side: MatchPlayerSide;
   player2_side: MatchPlayerSide;
   status: MatchStatus;
+  result_finalized_at: string | null;
   dq_player_id: string | null;
   next_match_id: string | null;
   next_match_slot: number | null;

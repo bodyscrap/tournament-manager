@@ -154,6 +154,7 @@ async function initSchema(db: Database): Promise<void> {
       player1_side           TEXT NOT NULL DEFAULT '1P',
       player2_side           TEXT NOT NULL DEFAULT '2P',
       status                 TEXT NOT NULL DEFAULT 'pending',
+      result_finalized_at    TEXT,
       dq_player_id           TEXT,
       next_match_id          TEXT,
       next_match_slot        INTEGER,
@@ -239,6 +240,9 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE matches ADD COLUMN player2_side TEXT NOT NULL DEFAULT '2P'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE matches ADD COLUMN result_finalized_at TEXT`);
   } catch { /* exists */ }
 }
 
@@ -883,6 +887,7 @@ function rowToMatch(row: MatchRow): Match {
     player1_side: row.player1_side ?? "-",
     player2_side: row.player2_side ?? "-",
     status: row.status,
+    result_finalized_at: row.result_finalized_at ?? null,
     dq_player_id: row.dq_player_id,
     next_match_id: row.next_match_id,
     next_match_slot: row.next_match_slot,
@@ -971,20 +976,21 @@ export async function insertMatch(match: Match): Promise<void> {
        id, tournament_id, tree_id, round, position, bracket,
        player1_id, player2_id, winner_id,
        player1_wins, player2_wins, player1_character_name, player2_character_name, player1_side, player2_side, status, dq_player_id,
+       result_finalized_at,
        next_match_id, next_match_slot,
        loser_next_match_id, loser_next_match_slot
      ) VALUES (
        $1, $2, $3, $4, $5, $6,
        $7, $8, $9,
-       $10, $11, $12, $13, $14, $15, $16, $17,
-       $18, $19,
-       $20, $21
+       $10, $11, $12, $13, $14, $15, $16, $17, $18,
+       $19, $20,
+       $21, $22
      )`,
     [
       match.id, match.tournament_id, match.tree_id, match.round, match.position, match.bracket,
       match.player1_id, match.player2_id, match.winner_id,
       match.player1_wins, match.player2_wins, match.player1_character_name, match.player2_character_name,
-      match.player1_side, match.player2_side, match.status, match.dq_player_id,
+      match.player1_side, match.player2_side, match.status, match.dq_player_id, match.result_finalized_at ?? null,
       match.next_match_id, match.next_match_slot,
       match.loser_next_match_id, match.loser_next_match_slot,
     ]
@@ -1024,9 +1030,10 @@ export async function updateMatchScore(
   dq_player_id: string | null
 ): Promise<void> {
   const db = await getDb();
+  const resultFinalizedAt = status === "completed" ? new Date().toISOString() : null;
   await db.execute(
-    `UPDATE matches SET player1_wins = $1, player2_wins = $2, status = $3, winner_id = $4, dq_player_id = $5 WHERE id = $6`,
-    [player1_wins, player2_wins, status, winner_id, dq_player_id, id]
+    `UPDATE matches SET player1_wins = $1, player2_wins = $2, status = $3, winner_id = $4, dq_player_id = $5, result_finalized_at = $6 WHERE id = $7`,
+    [player1_wins, player2_wins, status, winner_id, dq_player_id, resultFinalizedAt, id]
   );
 }
 
@@ -1098,7 +1105,7 @@ export async function deleteMatchById(id: string): Promise<void> {
 export async function resetMatchToPending(id: string): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `UPDATE matches SET status = 'pending', player1_wins = 0, player2_wins = 0, winner_id = NULL, dq_player_id = NULL WHERE id = $1`,
+    `UPDATE matches SET status = 'pending', player1_wins = 0, player2_wins = 0, winner_id = NULL, dq_player_id = NULL, result_finalized_at = NULL WHERE id = $1`,
     [id]
   );
 }

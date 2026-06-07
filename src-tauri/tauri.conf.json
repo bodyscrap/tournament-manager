@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tournament-manager",
+  "productName": "サバ管",
   "version": "0.1.0",
   "identifier": "com.svkcy.tournament-manager",
   "build": {
