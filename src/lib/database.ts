@@ -10,6 +10,12 @@ import type {
   TournamentRow,
   TournamentPlayer,
   TournamentPlayerRow,
+  TournamentAdmin,
+  TournamentAdminRow,
+  MatchActionLog,
+  MatchActionLogRow,
+  MatchActionType,
+  MatchActionConfirmerType,
   Match,
   MatchRow,
   BracketTree,
@@ -26,6 +32,39 @@ import type {
 // Singleton DB connection
 // ----------------------
 let _db: Database | null = null;
+
+async function ensureTournamentAdminsTable(db: Database): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tournament_admins (
+      tournament_id   TEXT NOT NULL,
+      admin_id        TEXT NOT NULL,
+      admin_code      TEXT NOT NULL DEFAULT '',
+      admin_sequence  INTEGER NOT NULL DEFAULT 0,
+      admin_id_4      TEXT NOT NULL DEFAULT '0000',
+      name            TEXT NOT NULL,
+      attributes      TEXT NOT NULL DEFAULT '{}',
+      created_at      TEXT NOT NULL,
+      PRIMARY KEY (tournament_id, admin_id)
+    );
+  `);
+}
+
+async function ensureMatchActionLogsTable(db: Database): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS match_action_logs (
+      id                 TEXT PRIMARY KEY,
+      tournament_id      TEXT NOT NULL,
+      match_id           TEXT NOT NULL,
+      action_type        TEXT NOT NULL,
+      target_player_id   TEXT,
+      confirmed_by_type  TEXT NOT NULL,
+      confirmed_by_id    TEXT NOT NULL,
+      confirmed_by_name  TEXT NOT NULL,
+      confirmed_by_code  TEXT NOT NULL,
+      created_at         TEXT NOT NULL
+    );
+  `);
+}
 
 export async function getDb(): Promise<Database> {
   if (!_db) {
@@ -70,6 +109,7 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS tournament (
       id                 TEXT PRIMARY KEY,
+      tournament_code    TEXT NOT NULL DEFAULT '0000',
       type               TEXT NOT NULL,
       max_participants   INTEGER NOT NULL DEFAULT 256,
       status             TEXT NOT NULL DEFAULT 'setup',
@@ -85,10 +125,16 @@ async function initSchema(db: Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS tournament_players (
       tournament_id TEXT NOT NULL,
       player_id     TEXT NOT NULL,
+      player_code   TEXT NOT NULL DEFAULT '',
+      player_sequence INTEGER NOT NULL DEFAULT 0,
+      player_id_4   TEXT NOT NULL DEFAULT '0000',
       seed          INTEGER NOT NULL,
       PRIMARY KEY (tournament_id, player_id)
     );
   `);
+
+  await ensureTournamentAdminsTable(db);
+  await ensureMatchActionLogsTable(db);
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS matches (
@@ -141,6 +187,9 @@ async function initSchema(db: Database): Promise<void> {
     await db.execute(`ALTER TABLE tournament ADD COLUMN name TEXT NOT NULL DEFAULT '大会'`);
   } catch { /* exists */ }
   try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN tournament_code TEXT NOT NULL DEFAULT '0000'`);
+  } catch { /* exists */ }
+  try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_input_mode TEXT NOT NULL DEFAULT 'free_input'`);
   } catch { /* exists */ }
   try {
@@ -165,6 +214,15 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament_players ADD COLUMN dq INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament_players ADD COLUMN player_code TEXT NOT NULL DEFAULT ''`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament_players ADD COLUMN player_sequence INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament_players ADD COLUMN player_id_4 TEXT NOT NULL DEFAULT '0000'`);
   } catch { /* exists */ }
   // Migration: add tree_id to matches
   try {
@@ -369,6 +427,7 @@ function rowToTournament(row: TournamentRow): Tournament {
   return {
     id: row.id,
     name: row.name,
+    tournament_code: row.tournament_code ?? "0000",
     type: row.type,
     max_participants: row.max_participants,
     status: row.status,
@@ -418,6 +477,7 @@ export async function getTournament(): Promise<Tournament | null> {
 
 export async function createTournament(
   id: string,
+  tournament_code: string,
   type: "single_elimination" | "double_elimination",
   max_participants: number,
   grand_final_reset: boolean,
@@ -432,11 +492,12 @@ export async function createTournament(
   const listJson = character_input_mode === "list_selection" ? JSON.stringify(normalizedList) : null;
   const listName = character_input_mode === "list_selection" ? (character_list_name?.trim() || "カスタムリスト") : null;
   await db.execute(
-    `INSERT INTO tournament (id, name, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, created_at)
-     VALUES ($1, $2, $3, $4, 'setup', $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO tournament (id, name, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, 'setup', $6, $7, $8, $9, $10, $11)`,
     [
       id,
       name,
+      tournament_code,
       type,
       max_participants,
       grand_final_reset ? 1 : 0,
@@ -470,6 +531,7 @@ export async function updateGrandFinalReset(
 
 export async function updateTournamentSettings(
   id: string,
+  tournament_code: string,
   type: "single_elimination" | "double_elimination",
   max_participants: number,
   grand_final_reset: boolean,
@@ -485,23 +547,26 @@ export async function updateTournamentSettings(
   await db.execute(
     `UPDATE tournament
      SET type = $1,
-         max_participants = $2,
-         grand_final_reset = $3,
-         character_input_mode = $4,
-         default_player_side = $5,
-         character_list_name = $6,
-         character_list_json = $7
-     WHERE id = $8`,
-    [type, max_participants, grand_final_reset ? 1 : 0, character_input_mode, default_player_side, listName, listJson, id]
+         tournament_code = $2,
+         max_participants = $3,
+         grand_final_reset = $4,
+         character_input_mode = $5,
+         default_player_side = $6,
+         character_list_name = $7,
+         character_list_json = $8
+     WHERE id = $9`,
+    [type, tournament_code, max_participants, grand_final_reset ? 1 : 0, character_input_mode, default_player_side, listName, listJson, id]
   );
 }
 
 export async function deleteTournament(id: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM tournament_players WHERE tournament_id = $1`, [id]);
+  await db.execute(`DELETE FROM tournament_admins WHERE tournament_id = $1`, [id]);
   await db.execute(`DELETE FROM matches WHERE tournament_id = $1`, [id]);
   await db.execute(`DELETE FROM bracket_trees WHERE tournament_id = $1`, [id]);
   await db.execute(`DELETE FROM round_locks WHERE tournament_id = $1`, [id]);
+  await db.execute(`DELETE FROM match_action_logs WHERE tournament_id = $1`, [id]);
   await db.execute(`DELETE FROM tournament WHERE id = $1`, [id]);
 }
 
@@ -514,6 +579,9 @@ function rowToTournamentPlayer(row: TournamentPlayerRow): TournamentPlayer {
   return {
     tournament_id: row.tournament_id,
     player_id: row.player_id,
+    player_code: row.player_code ?? "",
+    player_sequence: row.player_sequence ?? 0,
+    player_id_4: row.player_id_4 ?? "0000",
     seed: row.seed,
     name: row.name,
     character_name: row.character_name,
@@ -536,18 +604,203 @@ export async function getTournamentPlayers(
 export async function addTournamentPlayer(
   tournament_id: string,
   player_id: string,
+  player_code: string,
+  player_sequence: number,
+  player_id_4: string,
   seed: number,
   name: string,
   character_name: string | null,
   attributes: Record<string, string>
 ): Promise<void> {
   const db = await getDb();
-  await db.execute(
-    `INSERT OR REPLACE INTO tournament_players
-     (tournament_id, player_id, seed, name, character_name, attributes, dq)
-     VALUES ($1, $2, $3, $4, $5, $6, 0)`,
-    [tournament_id, player_id, seed, name, character_name, JSON.stringify(attributes)]
+  try {
+    await db.execute(
+      `INSERT OR REPLACE INTO tournament_players
+       (tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, attributes, dq)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)`,
+      [tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, JSON.stringify(attributes)]
+    );
+  } catch {
+    // Fallback for legacy schema that does not yet have player code columns.
+    await db.execute(
+      `INSERT OR REPLACE INTO tournament_players
+       (tournament_id, player_id, seed, name, character_name, attributes, dq)
+       VALUES ($1, $2, $3, $4, $5, $6, 0)`,
+      [tournament_id, player_id, seed, name, character_name, JSON.stringify(attributes)]
+    );
+  }
+}
+
+export async function updateTournamentPlayerCode(
+  tournament_id: string,
+  player_id: string,
+  player_code: string,
+  player_sequence: number,
+  player_id_4: string
+): Promise<void> {
+  const db = await getDb();
+  try {
+    await db.execute(
+      `UPDATE tournament_players
+       SET player_code = $1, player_sequence = $2, player_id_4 = $3
+       WHERE tournament_id = $4 AND player_id = $5`,
+      [player_code, player_sequence, player_id_4, tournament_id, player_id]
+    );
+  } catch {
+    // Legacy schema fallback: skip silently to keep app usable.
+  }
+}
+
+function rowToTournamentAdmin(row: TournamentAdminRow): TournamentAdmin {
+  let attributes: Record<string, string> = {};
+  try {
+    attributes = JSON.parse(row.attributes);
+  } catch {
+    // ignore
+  }
+  return {
+    tournament_id: row.tournament_id,
+    admin_id: row.admin_id,
+    admin_code: row.admin_code ?? "",
+    admin_sequence: row.admin_sequence ?? 0,
+    admin_id_4: row.admin_id_4 ?? "0000",
+    name: row.name,
+    attributes,
+    created_at: row.created_at,
+  };
+}
+
+export async function getTournamentAdmins(tournament_id: string): Promise<TournamentAdmin[]> {
+  const db = await getDb();
+  await ensureTournamentAdminsTable(db);
+  const rows = await db.select<TournamentAdminRow[]>(
+    `SELECT * FROM tournament_admins WHERE tournament_id = $1 ORDER BY admin_sequence ASC, created_at ASC`,
+    [tournament_id]
   );
+  return rows.map(rowToTournamentAdmin);
+}
+
+export async function addTournamentAdmin(
+  tournament_id: string,
+  admin_id: string,
+  admin_code: string,
+  admin_sequence: number,
+  admin_id_4: string,
+  name: string,
+  attributes: Record<string, string>
+): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentAdminsTable(db);
+  await db.execute(
+    `INSERT OR REPLACE INTO tournament_admins
+     (tournament_id, admin_id, admin_code, admin_sequence, admin_id_4, name, attributes, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      tournament_id,
+      admin_id,
+      admin_code,
+      admin_sequence,
+      admin_id_4,
+      name,
+      JSON.stringify(attributes),
+      new Date().toISOString(),
+    ]
+  );
+}
+
+export async function removeTournamentAdmin(tournament_id: string, admin_id: string): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentAdminsTable(db);
+  await db.execute(
+    `DELETE FROM tournament_admins WHERE tournament_id = $1 AND admin_id = $2`,
+    [tournament_id, admin_id]
+  );
+}
+
+export async function updateTournamentAdminName(
+  tournament_id: string,
+  admin_id: string,
+  name: string
+): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentAdminsTable(db);
+  await db.execute(
+    `UPDATE tournament_admins SET name = $1 WHERE tournament_id = $2 AND admin_id = $3`,
+    [name, tournament_id, admin_id]
+  );
+}
+
+export async function updateTournamentAdminCode(
+  tournament_id: string,
+  admin_id: string,
+  admin_code: string,
+  admin_sequence: number,
+  admin_id_4: string
+): Promise<void> {
+  const db = await getDb();
+  await ensureMatchActionLogsTable(db);
+  await db.execute(
+    `UPDATE tournament_admins
+     SET admin_code = $1, admin_sequence = $2, admin_id_4 = $3
+     WHERE tournament_id = $4 AND admin_id = $5`,
+    [admin_code, admin_sequence, admin_id_4, tournament_id, admin_id]
+  );
+}
+
+function rowToMatchActionLog(row: MatchActionLogRow): MatchActionLog {
+  return {
+    id: row.id,
+    tournament_id: row.tournament_id,
+    match_id: row.match_id,
+    action_type: row.action_type,
+    target_player_id: row.target_player_id,
+    confirmed_by_type: row.confirmed_by_type,
+    confirmed_by_id: row.confirmed_by_id,
+    confirmed_by_name: row.confirmed_by_name,
+    confirmed_by_code: row.confirmed_by_code,
+    created_at: row.created_at,
+  };
+}
+
+export async function insertMatchActionLog(
+  id: string,
+  tournament_id: string,
+  match_id: string,
+  action_type: MatchActionType,
+  target_player_id: string | null,
+  confirmed_by_type: MatchActionConfirmerType,
+  confirmed_by_id: string,
+  confirmed_by_name: string,
+  confirmed_by_code: string
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO match_action_logs
+     (id, tournament_id, match_id, action_type, target_player_id, confirmed_by_type, confirmed_by_id, confirmed_by_name, confirmed_by_code, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      id,
+      tournament_id,
+      match_id,
+      action_type,
+      target_player_id,
+      confirmed_by_type,
+      confirmed_by_id,
+      confirmed_by_name,
+      confirmed_by_code,
+      new Date().toISOString(),
+    ]
+  );
+}
+
+export async function getMatchActionLogsByTournament(tournament_id: string): Promise<MatchActionLog[]> {
+  const db = await getDb();
+  await ensureMatchActionLogsTable(db);
+  const rows = await db.select<MatchActionLogRow[]>(
+    `SELECT * FROM match_action_logs WHERE tournament_id = $1 ORDER BY created_at DESC`,
+    [tournament_id]
+  );
+  return rows.map(rowToMatchActionLog);
 }
 
 export async function updateTournamentParticipantDq(
@@ -594,6 +847,18 @@ export async function updateTournamentPlayerCharacter(
   await db.execute(
     `UPDATE tournament_players SET character_name = $1 WHERE tournament_id = $2 AND player_id = $3`,
     [character_name, tournament_id, player_id]
+  );
+}
+
+export async function updateTournamentPlayerName(
+  tournament_id: string,
+  player_id: string,
+  name: string
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE tournament_players SET name = $1 WHERE tournament_id = $2 AND player_id = $3`,
+    [name, tournament_id, player_id]
   );
 }
 

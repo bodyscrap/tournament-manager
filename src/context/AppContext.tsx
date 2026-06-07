@@ -22,6 +22,13 @@ import {
   deleteTournament,
   getTournamentPlayers,
   addTournamentPlayer,
+  updateTournamentPlayerCode,
+  getTournamentAdmins,
+  addTournamentAdmin,
+  removeTournamentAdmin,
+  updateTournamentAdminName,
+  updateTournamentAdminCode,
+  insertMatchActionLog,
   removeTournamentPlayer,
   updateTournamentPlayerSeed,
   getMatchesByTournament,
@@ -52,9 +59,11 @@ import {
   updateCharacterList,
   deleteCharacterList,
   updateTournamentPlayerCharacter,
+  updateTournamentPlayerName,
   updateMatchCharacters,
   updateMatchSides,
 } from "../lib/database";
+import { buildAdminCode, buildPlayerCode, normalizeTournamentCode } from "../lib/playerCode";
 import {
   generateSingleElimination,
   generateDoubleElimination,
@@ -68,6 +77,7 @@ import type {
   CharacterList,
   Tournament,
   TournamentPlayer,
+  TournamentAdmin,
   BracketTree,
   Match,
   MatchBracket,
@@ -77,7 +87,20 @@ import type {
   TournamentDefaultPlayerSide,
   RoundLock,
   MatchPlayerSide,
+  MatchActionConfirmerType,
 } from "../lib/types";
+
+interface ActionConfirmer {
+  type: MatchActionConfirmerType;
+  id: string;
+  name: string;
+  code: string;
+}
+
+interface ScoreActionAuth {
+  dqConfirmer?: ActionConfirmer | null;
+  forcedLossConfirmer?: ActionConfirmer | null;
+}
 
 // -------------------------------------------------------
 // Context value type
@@ -121,9 +144,11 @@ interface AppContextValue {
   // Active tournament
   tournament: Tournament | null;
   participants: TournamentPlayer[];
+  admins: TournamentAdmin[];
   matches: Match[];
   fetchTournament: () => Promise<void>;
   createNew: (
+    tournament_code: string,
     type: TournamentType,
     max_participants: number,
     grand_final_reset: boolean,
@@ -140,7 +165,11 @@ interface AppContextValue {
     attributes: Record<string, string>,
     player_id?: string
   ) => Promise<void>;
+  editParticipantName: (player_id: string, name: string) => Promise<void>;
   setParticipantCharacter: (player_id: string, character_name: string | null) => Promise<void>;
+  addAdmin: (name: string, attributes?: Record<string, string>) => Promise<void>;
+  editAdminName: (admin_id: string, name: string) => Promise<void>;
+  removeAdmin: (admin_id: string) => Promise<void>;
   removeParticipant: (player_id: string) => Promise<void>;
   swapSeeds: (player_id_a: string, player_id_b: string) => Promise<void>;
   randomizeSeeds: () => Promise<void>;
@@ -148,6 +177,7 @@ interface AppContextValue {
   setGrandFinalReset: (enabled: boolean) => Promise<void>;
   setTournamentStatus: (status: TournamentStatus) => Promise<void>;
   updateTournamentSettings: (
+    tournament_code: string,
     type: TournamentType,
     max_participants: number,
     grand_final_reset: boolean,
@@ -173,7 +203,8 @@ interface AppContextValue {
     dq_player_ids: string[],
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
-    player2_character_name?: string | null
+    player2_character_name?: string | null,
+    auth?: ScoreActionAuth
   ) => Promise<void>;
 
   // Mid-tournament match creation
@@ -214,7 +245,8 @@ interface AppContextValue {
     dq_player_ids: string[],
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
-    player2_character_name?: string | null
+    player2_character_name?: string | null,
+    auth?: ScoreActionAuth
   ) => Promise<void>;
   findActiveMatch: (player_id: string) => Promise<Match | null>;
   findMatchByTwoPlayers: (
@@ -369,6 +401,124 @@ function validateRequiredCharacterSelection(
     throw new Error(`${label}の使用キャラは大会の使用可能キャラリストから選択してください`);
   }
   return sanitized;
+}
+
+function getNextPlayerSequence(participants: TournamentPlayer[]): number {
+  const maxSequence = participants.reduce((max, p) => {
+    const n = Number.isFinite(p.player_sequence) ? p.player_sequence : 0;
+    return n > max ? n : max;
+  }, 0);
+  return maxSequence + 1;
+}
+
+async function ensureParticipantCodes(
+  tournament: Tournament,
+  participants: TournamentPlayer[]
+): Promise<boolean> {
+  const normalizedTournamentCode = normalizeTournamentCode(tournament.tournament_code);
+  let changed = false;
+
+  const ordered = [...participants].sort((a, b) => a.seed - b.seed);
+  for (let i = 0; i < ordered.length; i++) {
+    const participant = ordered[i];
+    const needsSequence = !participant.player_sequence || participant.player_sequence <= 0;
+    const nextSequence = needsSequence ? i + 1 : participant.player_sequence;
+    const needsPlayerId4 = !/^\d{4}$/.test(participant.player_id_4 ?? "");
+    const needsCode = !/^\d{16}$/.test(participant.player_code ?? "");
+
+    if (!needsSequence && !needsPlayerId4 && !needsCode) continue;
+
+    const generated = buildPlayerCode(normalizedTournamentCode, nextSequence);
+    await updateTournamentPlayerCode(
+      tournament.id,
+      participant.player_id,
+      generated.playerCode,
+      nextSequence,
+      generated.playerId4
+    );
+    changed = true;
+  }
+
+  return changed;
+}
+
+function getNextAdminSequence(admins: TournamentAdmin[]): number {
+  const maxSequence = admins.reduce((max, a) => {
+    const n = Number.isFinite(a.admin_sequence) ? a.admin_sequence : 0;
+    return n > max ? n : max;
+  }, 0);
+  return maxSequence + 1;
+}
+
+async function ensureAdminCodes(
+  tournament: Tournament,
+  admins: TournamentAdmin[]
+): Promise<boolean> {
+  const normalizedTournamentCode = normalizeTournamentCode(tournament.tournament_code);
+  let changed = false;
+
+  const ordered = [...admins].sort((a, b) => a.admin_sequence - b.admin_sequence);
+  for (let i = 0; i < ordered.length; i++) {
+    const admin = ordered[i];
+    const sequence = admin.admin_sequence > 0 ? admin.admin_sequence : i + 1;
+    const needsId4 = !/^\d{4}$/.test(admin.admin_id_4 ?? "");
+    const needsCode = !/^\d{16}$/.test(admin.admin_code ?? "");
+    if (!needsId4 && !needsCode) continue;
+
+    const generated = buildAdminCode(
+      normalizedTournamentCode,
+      tournament.max_participants,
+      sequence
+    );
+    await updateTournamentAdminCode(
+      tournament.id,
+      admin.admin_id,
+      generated.adminCode,
+      sequence,
+      generated.adminId4
+    );
+    changed = true;
+  }
+
+  return changed;
+}
+
+async function writeMatchActionLogs(
+  tournamentId: string,
+  matchId: string,
+  dqPlayerIds: string[],
+  forcedLoserId: string | null,
+  auth?: ScoreActionAuth
+): Promise<void> {
+  if (dqPlayerIds.length > 0 && auth?.dqConfirmer) {
+    for (const targetPlayerId of dqPlayerIds) {
+      await insertMatchActionLog(
+        uuidv4(),
+        tournamentId,
+        matchId,
+        "dq",
+        targetPlayerId,
+        auth.dqConfirmer.type,
+        auth.dqConfirmer.id,
+        auth.dqConfirmer.name,
+        auth.dqConfirmer.code
+      );
+    }
+  }
+
+  if (forcedLoserId && auth?.forcedLossConfirmer) {
+    await insertMatchActionLog(
+      uuidv4(),
+      tournamentId,
+      matchId,
+      "forced_loss",
+      forcedLoserId,
+      auth.forcedLossConfirmer.type,
+      auth.forcedLossConfirmer.id,
+      auth.forcedLossConfirmer.name,
+      auth.forcedLossConfirmer.code
+    );
+  }
 }
 
 function resolveMatchOutcome(
@@ -531,6 +681,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [tournamentList, setTournamentList] = useState<Tournament[]>([]);
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [participants, setParticipants] = useState<TournamentPlayer[]>([]);
+  const [admins, setAdmins] = useState<TournamentAdmin[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [trees, setTrees] = useState<BracketTree[]>([]);
   const [roundLocks, setRoundLocks] = useState<RoundLock[]>([]);
@@ -650,6 +801,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!id) {
       setTournament(null);
       setParticipants([]);
+      setAdmins([]);
       setMatches([]);
       setTrees([]);
       setRoundLocks([]);
@@ -658,23 +810,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const t = await getTournamentById(id);
     setTournament(t);
     if (t) {
-      const [p, loadedMatches, tr, rl] = await Promise.all([
+      const [loadedParticipants, loadedAdmins, loadedMatches, tr, rl] = await Promise.all([
         getTournamentPlayers(t.id),
+        getTournamentAdmins(t.id).catch((error) => {
+          console.error("管理者一覧の取得に失敗しました", error);
+          return [];
+        }),
         getMatchesByTournament(t.id),
         getBracketTrees(t.id),
         getRoundLocks(t.id),
       ]);
 
+      const repairedParticipantCodes = await ensureParticipantCodes(t, loadedParticipants).catch((error) => {
+        console.error("参加者コード補完に失敗しました", error);
+        return false;
+      });
+      const repairedAdminCodes = await ensureAdminCodes(t, loadedAdmins).catch((error) => {
+        console.error("管理者コード補完に失敗しました", error);
+        return false;
+      });
+      const p = repairedParticipantCodes
+        ? await getTournamentPlayers(t.id)
+        : loadedParticipants;
+      const a = repairedAdminCodes
+        ? await getTournamentAdmins(t.id)
+        : loadedAdmins;
+
       const repaired = await repairDoubleElimGrandFinal(t, loadedMatches);
       const m = repaired ? await getMatchesByTournament(t.id) : loadedMatches;
 
       setParticipants(p);
+      setAdmins(a);
       setMatches(m);
       setTrees(tr);
       setRoundLocks(rl);
     } else {
       setTournament(null);
       setParticipants([]);
+      setAdmins([]);
       setMatches([]);
       setTrees([]);
       setRoundLocks([]);
@@ -826,6 +999,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const createNew = useCallback(
     async (
+      tournament_code: string,
       type: TournamentType,
       max_participants: number,
       grand_final_reset: boolean,
@@ -836,8 +1010,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       default_player_side: TournamentDefaultPlayerSide
     ) => {
       const id = uuidv4();
+      const normalizedTournamentCode = normalizeTournamentCode(tournament_code);
       await createTournament(
         id,
+        normalizedTournamentCode,
         type,
         max_participants,
         grand_final_reset,
@@ -847,6 +1023,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         normalizeCharacterList(character_list),
         default_player_side
       );
+
+      try {
+        const initialAdmin = buildAdminCode(normalizedTournamentCode, max_participants, 1);
+        await addTournamentAdmin(
+          id,
+          uuidv4(),
+          initialAdmin.adminCode,
+          1,
+          initialAdmin.adminId4,
+          "管理者",
+          {}
+        );
+      } catch (error) {
+        console.error("初期管理者の作成に失敗しました。大会作成は継続します。", error);
+      }
+
       activeTournamentIdRef.current = id;
       localStorage.setItem("activeTournamentId", id);
       await fetchTournament();
@@ -906,13 +1098,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       const id = player_id ?? uuidv4();
       const p = await getTournamentPlayers(tournament.id);
+      const nextSequence = getNextPlayerSequence(p);
+      const generatedCode = buildPlayerCode(tournament.tournament_code, nextSequence);
       const nextSeed = p.length + 1;
       const sanitizedCharacter = validateRequiredCharacterSelection(
         tournament,
         character_name,
         name
       );
-      await addTournamentPlayer(tournament.id, id, nextSeed, name, sanitizedCharacter, attributes);
+      await addTournamentPlayer(
+        tournament.id,
+        id,
+        generatedCode.playerCode,
+        nextSequence,
+        generatedCode.playerId4,
+        nextSeed,
+        name,
+        sanitizedCharacter,
+        attributes
+      );
+      await fetchTournament();
+    },
+    [tournament, fetchTournament]
+  );
+
+  const addAdmin = useCallback(
+    async (name: string, attributes: Record<string, string> = {}) => {
+      if (!tournament) return;
+      const trimmedName = name.trim();
+      if (!trimmedName) return;
+
+      const currentAdmins = await getTournamentAdmins(tournament.id);
+      const nextSequence = getNextAdminSequence(currentAdmins);
+      const generated = buildAdminCode(
+        tournament.tournament_code,
+        tournament.max_participants,
+        nextSequence
+      );
+      await addTournamentAdmin(
+        tournament.id,
+        uuidv4(),
+        generated.adminCode,
+        nextSequence,
+        generated.adminId4,
+        trimmedName,
+        attributes
+      );
+      await fetchTournament();
+    },
+    [tournament, fetchTournament]
+  );
+
+  const removeAdmin = useCallback(
+    async (admin_id: string) => {
+      if (!tournament) return;
+      const currentAdmins = await getTournamentAdmins(tournament.id);
+      if (currentAdmins.length <= 1) {
+        throw new Error("管理者が1名のみのため削除できません");
+      }
+      await removeTournamentAdmin(tournament.id, admin_id);
+      await fetchTournament();
+    },
+    [tournament, fetchTournament]
+  );
+
+  const editAdminName = useCallback(
+    async (admin_id: string, name: string) => {
+      if (!tournament) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      await updateTournamentAdminName(tournament.id, admin_id, trimmed);
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -947,6 +1202,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [tournament, participants, fetchTournament]
   );
 
+  const editParticipantName = useCallback(
+    async (player_id: string, name: string) => {
+      if (!tournament) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      await updateTournamentPlayerName(tournament.id, player_id, trimmed);
+      await fetchTournament();
+    },
+    [tournament, fetchTournament]
+  );
+
   const swapSeeds = useCallback(
     async (player_id_a: string, player_id_b: string) => {
       if (!tournament) return;
@@ -975,6 +1241,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Freeze character-list snapshot and list name at tournament start.
     await updateTournamentSettingsDb(
       tournament.id,
+      normalizeTournamentCode(tournament.tournament_code),
       tournament.type,
       tournament.max_participants,
       tournament.grand_final_reset,
@@ -1018,6 +1285,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       await updateTournamentSettingsDb(
         tournament.id,
+        normalizeTournamentCode(tournament.tournament_code),
         tournament.type,
         tournament.max_participants,
         enabled,
@@ -1033,6 +1301,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateTournamentSettings = useCallback(
     async (
+      tournament_code: string,
       type: TournamentType,
       max_participants: number,
       grand_final_reset: boolean,
@@ -1042,8 +1311,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       default_player_side: TournamentDefaultPlayerSide
     ) => {
       if (!tournament) return;
+      const normalizedTournamentCode = normalizeTournamentCode(tournament_code);
       await updateTournamentSettingsDb(
         tournament.id,
+        normalizedTournamentCode,
         type,
         max_participants,
         grand_final_reset,
@@ -1052,6 +1323,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         normalizeCharacterList(character_list),
         default_player_side
       );
+
+      if (normalizedTournamentCode !== normalizeTournamentCode(tournament.tournament_code)) {
+        const allParticipants = await getTournamentPlayers(tournament.id);
+        for (const participant of allParticipants) {
+          const sequence = participant.player_sequence > 0 ? participant.player_sequence : participant.seed;
+          const generated = buildPlayerCode(normalizedTournamentCode, sequence);
+          await updateTournamentPlayerCode(
+            tournament.id,
+            participant.player_id,
+            generated.playerCode,
+            sequence,
+            generated.playerId4
+          );
+        }
+      }
+
+      if (
+        normalizedTournamentCode !== normalizeTournamentCode(tournament.tournament_code) ||
+        max_participants !== tournament.max_participants
+      ) {
+        const allAdmins = await getTournamentAdmins(tournament.id);
+        for (const admin of allAdmins) {
+          const sequence = admin.admin_sequence > 0 ? admin.admin_sequence : 1;
+          const generated = buildAdminCode(
+            normalizedTournamentCode,
+            max_participants,
+            sequence
+          );
+          await updateTournamentAdminCode(
+            tournament.id,
+            admin.admin_id,
+            generated.adminCode,
+            sequence,
+            generated.adminId4
+          );
+        }
+      }
+
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -1206,7 +1515,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dq_player_ids: string[],
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
-      player2_character_name: string | null = null
+      player2_character_name: string | null = null,
+      auth?: ScoreActionAuth
     ) => {
       if (!tournament) return;
 
@@ -1241,6 +1551,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         status,
         winner_id,
         dq_player_id
+      );
+
+      await writeMatchActionLogs(
+        tournament.id,
+        match.id,
+        dq_player_ids,
+        forced_loser_id,
+        auth
       );
 
       if (status === "completed") {
@@ -1409,7 +1727,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dq_player_ids: string[],
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
-      player2_character_name: string | null = null
+      player2_character_name: string | null = null,
+      auth?: ScoreActionAuth
     ) => {
       if (!tournament) return;
 
@@ -1476,6 +1795,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Update this match with the corrected result
         await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
 
+        await writeMatchActionLogs(
+          tournament.id,
+          match.id,
+          dq_player_ids,
+          forced_loser_id,
+          auth
+        );
+
         // Place the new winner/loser in their downstream slots
         if (newWinnerId && match.next_match_id && match.next_match_slot) {
           await updateMatchPlayerWithCharacter(
@@ -1519,6 +1846,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Winner unchanged — just update the scores
         await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
+        await writeMatchActionLogs(
+          tournament.id,
+          match.id,
+          dq_player_ids,
+          forced_loser_id,
+          auth
+        );
       }
 
       await syncPendingMatchSides(tournament);
@@ -1559,8 +1893,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
 
       const playerId = uuidv4();
+      const nextSequence = getNextPlayerSequence(p);
+      const generatedCode = buildPlayerCode(tournament.tournament_code, nextSequence);
       const nextSeed = p.length + 1;
-      await addTournamentPlayer(tournament.id, playerId, nextSeed, name, sanitizedCharacter, {});
+      await addTournamentPlayer(
+        tournament.id,
+        playerId,
+        generatedCode.playerCode,
+        nextSequence,
+        generatedCode.playerId4,
+        nextSeed,
+        name,
+        sanitizedCharacter,
+        {}
+      );
 
       const assignmentBracket: MatchBracket = "winners";
 
@@ -1859,6 +2205,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     finalizeTournament,
     tournament,
     participants,
+    admins,
     matches,
     trees,
     roundLocks,
@@ -1868,6 +2215,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     createNew,
     removeTournament,
     addParticipant,
+    editParticipantName,
+    addAdmin,
+    editAdminName,
+    removeAdmin,
     setParticipantCharacter,
     removeParticipant,
     swapSeeds,

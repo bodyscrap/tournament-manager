@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
-import type { MatchBracket, CharacterInputMode, TournamentDefaultPlayerSide } from "../lib/types";
+import type { CharacterInputMode, TournamentDefaultPlayerSide } from "../lib/types";
 import { computePlayerRankings } from "../lib/ranking";
 import { buildDuplicateName, parseLinesToUniqueList } from "../lib/characterListUtils";
+import { normalizeTournamentCode } from "../lib/playerCode";
 
 function getDefaultPlayerSideLabel(value: TournamentDefaultPlayerSide): string {
   switch (value) {
@@ -21,7 +22,6 @@ export function TournamentSetupPage() {
     tournament,
     participants,
     matches,
-    trees,
     players,
     characters,
     characterLists,
@@ -30,6 +30,7 @@ export function TournamentSetupPage() {
     createNew,
     removeTournament,
     addParticipant,
+    editParticipantName,
     setParticipantCharacter,
     removeParticipant,
     swapSeeds,
@@ -37,13 +38,13 @@ export function TournamentSetupPage() {
     generateBracket,
     updateTournamentSettings,
     finalizeTournament,
-    addMidTournamentMatch,
   } = useAppContext();
 
   const navigate = useNavigate();
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
+  const [createTournamentCode, setCreateTournamentCode] = useState("0000");
   const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
   const [maxP, setMaxP] = useState(8);
   const [gfReset, setGfReset] = useState(true);
@@ -57,6 +58,7 @@ export function TournamentSetupPage() {
 
   // --- 設定編集 (setup フェーズ) ---
   const [editSettings, setEditSettings] = useState(false);
+  const [editTournamentCode, setEditTournamentCode] = useState("0000");
   const [editType, setEditType] = useState<"single_elimination" | "double_elimination">("single_elimination");
   const [editMaxP, setEditMaxP] = useState(256);
   const [editGfReset, setEditGfReset] = useState(true);
@@ -78,20 +80,17 @@ export function TournamentSetupPage() {
   const [generating, setGenerating] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
 
-  // --- 大会中に試合を追加フォーム ---
-  const [midP1, setMidP1] = useState("");
-  const [midP2, setMidP2] = useState("");
-  const [midRound, setMidRound] = useState(1);
-  const [midBracket, setMidBracket] = useState<MatchBracket>("winners");
-  const [addingMatch, setAddingMatch] = useState(false);
-
   const participantIds = new Set(participants.map((p) => p.player_id));
   const sortedParticipants = [...participants].sort((a, b) => a.seed - b.seed);
   const rankings = useMemo(
     () => computePlayerRankings(participants, matches),
     [participants, matches]
   );
-  const primaryTree = trees[0] ?? null;
+
+  const generateRandomTournamentCode = () => {
+    const value = Math.floor(Math.random() * 10000);
+    return value.toString().padStart(4, "0");
+  };
 
   const collectUsedCharacters = (): string[] => {
     const unique = new Set<string>();
@@ -115,6 +114,7 @@ export function TournamentSetupPage() {
     const tournamentName =
       name.trim() ||
       `大会 ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "short", day: "numeric" })}`;
+    const tournamentCode = normalizeTournamentCode(createTournamentCode);
     const characterList = parseLinesToUniqueList(createCharacterListText);
     const characterListName = createCharacterMode === "list_selection"
       ? (createCharacterListName.trim() || "カスタムリスト")
@@ -122,6 +122,7 @@ export function TournamentSetupPage() {
     setCreating(true);
     try {
       await createNew(
+        tournamentCode,
         type,
         maxP,
         gfReset,
@@ -139,6 +140,7 @@ export function TournamentSetupPage() {
   const handleOpenSettings = () => {
     if (!tournament) return;
     setEditType(tournament.type);
+    setEditTournamentCode(tournament.tournament_code ?? "0000");
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
     setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
@@ -151,12 +153,14 @@ export function TournamentSetupPage() {
 
   const handleSaveSettings = async () => {
     const characterList = parseLinesToUniqueList(editCharacterListText);
+    const tournamentCode = normalizeTournamentCode(editTournamentCode);
     const characterListName = editCharacterMode === "list_selection"
       ? (editCharacterListName.trim() || "カスタムリスト")
       : null;
     setSavingSettings(true);
     try {
       await updateTournamentSettings(
+        tournamentCode,
         editType,
         editMaxP,
         editGfReset,
@@ -183,6 +187,8 @@ export function TournamentSetupPage() {
       await addParticipant(addName.trim(), addCharacter.trim() || null, {});
       setAddName("");
       setAddCharacter("");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "参加者の追加に失敗しました");
     } finally {
       setAdding(false);
     }
@@ -199,7 +205,11 @@ export function TournamentSetupPage() {
       return;
     }
     const character = isListMode ? (charInList ? p.character_name : null) : p.character_name;
-    await addParticipant(p.name, character, p.attributes, p.id);
+    try {
+      await addParticipant(p.name, character, p.attributes, p.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "名簿からの参加者追加に失敗しました");
+    }
   };
 
   const handleGenerate = async () => {
@@ -249,24 +259,34 @@ export function TournamentSetupPage() {
     }
   };
 
-  const handleAddMatch = async () => {
-    if (!midP1 || !primaryTree) return;
-    setAddingMatch(true);
-    try {
-      await addMidTournamentMatch(primaryTree.id, midRound, midBracket, midP1, midP2 || null);
-      setMidP1("");
-      setMidP2("");
-    } finally {
-      setAddingMatch(false);
-    }
-  };
-
   // ===== 新規作成画面 =====
   if (!tournament) {
     return (
       <div className="p-6 max-w-lg mx-auto">
         <h2 className="text-2xl font-bold text-gray-800 mb-6">新規大会作成</h2>
         <div className="bg-white rounded-xl shadow p-6 border border-gray-200 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">大会コード (4桁)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                value={createTournamentCode}
+                onChange={(e) => setCreateTournamentCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="例: 0046"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setCreateTournamentCode(generateRandomTournamentCode())}
+                className="shrink-0 px-3 py-2 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
+              >
+                ランダム決定
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">先頭ゼロを保持して 4 桁で扱います。</p>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">大会名</label>
             <input
@@ -429,8 +449,23 @@ export function TournamentSetupPage() {
           <p className="text-sm text-gray-500 mt-1">
             デフォルトプレイヤーサイド: {getDefaultPlayerSideLabel(tournament.default_player_side ?? "upper_1p")}
           </p>
+          <p className="text-sm text-gray-500 mt-1">
+            大会コード: <span className="font-mono">{normalizeTournamentCode(tournament.tournament_code ?? "0000")}</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate("/tournament/player-cards")}
+            className="text-xs px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
+          >
+            🪪 参加者カード
+          </button>
+          <button
+            onClick={() => navigate("/tournament/admins")}
+            className="text-xs px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-lg"
+          >
+            🛡️ 管理者リスト
+          </button>
           {tournament.status === "setup" && !isReadOnly && (
             <button onClick={handleOpenSettings} className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg">
               ⚙️ 設定を編集
@@ -469,6 +504,26 @@ export function TournamentSetupPage() {
         <div className="mb-4 bg-white rounded-xl shadow border border-blue-200 p-5">
           <h3 className="font-semibold text-gray-700 mb-4">大会設定の編集</h3>
           <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">大会コード (4桁)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={editTournamentCode}
+                  onChange={(e) => setEditTournamentCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditTournamentCode(generateRandomTournamentCode())}
+                  className="shrink-0 px-3 py-2 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
+                >
+                  ランダム決定
+                </button>
+              </div>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">トーナメント形式</label>
               <select
@@ -688,12 +743,30 @@ export function TournamentSetupPage() {
                     </>
                   )}
                   {!isReadOnly && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeParticipant(tp.player_id); }}
-                      className="text-red-400 hover:text-red-600 text-xs ml-1"
-                    >
-                      ✕
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const nextName = prompt("参加者名を入力してください", tp.name);
+                          if (nextName === null) return;
+                          const trimmed = nextName.trim();
+                          if (!trimmed) {
+                            alert("参加者名を入力してください");
+                            return;
+                          }
+                          await editParticipantName(tp.player_id, trimmed);
+                        }}
+                        className="text-xs px-2 py-0.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200"
+                      >
+                        名前編集
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeParticipant(tp.player_id); }}
+                        className="text-red-400 hover:text-red-600 text-xs ml-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -721,7 +794,7 @@ export function TournamentSetupPage() {
               <h3 className="font-semibold text-gray-700 mb-3">参加者を追加</h3>
               {tournament.status === "in_progress" && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
-                  大会進行中です。追加した参加者の試合は下の「試合を追加」から別途作成してください。
+                  大会進行中です。追加した参加者の試合はブラケット画面から追加してください。
                 </p>
               )}
               <div className="space-y-2">
@@ -805,84 +878,6 @@ export function TournamentSetupPage() {
           </div>
         )}
       </div>
-
-      {/* Mid-tournament: add match */}
-      {tournament.status === "in_progress" && !isReadOnly && (
-        <div className="mt-6 space-y-4">
-          {/* 既定ブラケットへ試合を追加 */}
-          {primaryTree && (
-            <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-5">
-              <h3 className="font-semibold text-gray-700 mb-1">
-                試合を追加 — <span className="text-blue-600">{primaryTree.name}</span>
-              </h3>
-              <p className="text-xs text-gray-400 mb-4">この大会のブラケットに新しい試合を追加します。</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">プレイヤー 1 *</label>
-                  <select
-                    value={midP1}
-                    onChange={(e) => setMidP1(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="">-- 選択 --</option>
-                    {sortedParticipants.map((tp) => (
-                      <option key={tp.player_id} value={tp.player_id}>
-                        {tp.name}{tp.character_name ? ` (${tp.character_name})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">プレイヤー 2（省略でBYE）</label>
-                  <select
-                    value={midP2}
-                    onChange={(e) => setMidP2(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="">-- なし (BYE) --</option>
-                    {sortedParticipants
-                      .filter((tp) => tp.player_id !== midP1)
-                      .map((tp) => (
-                        <option key={tp.player_id} value={tp.player_id}>
-                          {tp.name}{tp.character_name ? ` (${tp.character_name})` : ""}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">ラウンド</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={midRound}
-                    onChange={(e) => setMidRound(Math.max(1, Number(e.target.value)))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">ブラケット種別</label>
-                  <select
-                    value={midBracket}
-                    onChange={(e) => setMidBracket(e.target.value as MatchBracket)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="winners">ウィナーズ</option>
-                    <option value="losers">ルーザーズ</option>
-                    <option value="grand_final">グランドファイナル</option>
-                  </select>
-                </div>
-              </div>
-              <button
-                onClick={handleAddMatch}
-                disabled={addingMatch || !midP1}
-                className="mt-4 w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
-              >
-                {addingMatch ? "追加中..." : "＋ 試合を追加"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       {(tournament.status === "completed" || tournament.status === "finalized") && rankings.length > 0 && (
         <div className="mt-6 bg-white rounded-xl shadow-sm border border-blue-200 p-5">

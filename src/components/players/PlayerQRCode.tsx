@@ -1,6 +1,6 @@
 import { useState } from "react";
-import QRCode from "react-qr-code";
 import type { Player } from "../../lib/types";
+import { SafeQRCode } from "../common/SafeQRCode";
 
 interface Props {
   player: Player;
@@ -26,7 +26,7 @@ export function PlayerQRCode({ player }: Props) {
       </button>
       {show && (
         <div className="mt-2 p-3 bg-white inline-block rounded shadow">
-          <QRCode value={qrData} size={160} />
+          <SafeQRCode value={qrData} size={160} />
           <p className="text-xs text-gray-500 mt-1 text-center max-w-[160px] break-all">
             {player.name}
           </p>

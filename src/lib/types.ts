@@ -59,6 +59,7 @@ export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
 export interface Tournament {
   id: string;
   name: string;
+  tournament_code: string;
   type: TournamentType;
   max_participants: number;
   status: TournamentStatus;
@@ -73,6 +74,7 @@ export interface Tournament {
 export interface TournamentRow {
   id: string;
   name: string;
+  tournament_code: string;
   type: TournamentType;
   max_participants: number;
   status: TournamentStatus;
@@ -90,6 +92,9 @@ export interface TournamentRow {
 export interface TournamentPlayer {
   tournament_id: string;
   player_id: string;
+  player_code: string;
+  player_sequence: number;
+  player_id_4: string;
   seed: number; // bracket position (1-indexed)
   name: string;
   character_name: string | null;
@@ -100,11 +105,68 @@ export interface TournamentPlayer {
 export interface TournamentPlayerRow {
   tournament_id: string;
   player_id: string;
+  player_code: string;
+  player_sequence: number;
+  player_id_4: string;
   seed: number;
   name: string;
   character_name: string | null;
   attributes: string; // raw JSON
   dq: number;
+}
+
+// =====================
+// Tournament Admin
+// =====================
+export interface TournamentAdmin {
+  tournament_id: string;
+  admin_id: string;
+  admin_code: string;
+  admin_sequence: number;
+  admin_id_4: string;
+  name: string;
+  attributes: Record<string, string>;
+  created_at: string;
+}
+
+export interface TournamentAdminRow {
+  tournament_id: string;
+  admin_id: string;
+  admin_code: string;
+  admin_sequence: number;
+  admin_id_4: string;
+  name: string;
+  attributes: string;
+  created_at: string;
+}
+
+export type MatchActionType = "dq" | "forced_loss";
+export type MatchActionConfirmerType = "participant" | "admin";
+
+export interface MatchActionLog {
+  id: string;
+  tournament_id: string;
+  match_id: string;
+  action_type: MatchActionType;
+  target_player_id: string | null;
+  confirmed_by_type: MatchActionConfirmerType;
+  confirmed_by_id: string;
+  confirmed_by_name: string;
+  confirmed_by_code: string;
+  created_at: string;
+}
+
+export interface MatchActionLogRow {
+  id: string;
+  tournament_id: string;
+  match_id: string;
+  action_type: MatchActionType;
+  target_player_id: string | null;
+  confirmed_by_type: MatchActionConfirmerType;
+  confirmed_by_id: string;
+  confirmed_by_name: string;
+  confirmed_by_code: string;
+  created_at: string;
 }
 
 // =====================
