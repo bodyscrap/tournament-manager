@@ -124,66 +124,18 @@ export function BracketPage() {
   const resolveSearchPlayerIdByCode = (raw: string): string | null => {
     const trimmed = raw.trim();
     if (!trimmed) return null;
-
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      if (parsed.entity_type === "participant" && typeof parsed.player_id === "string") {
-        return parsed.player_id;
-      }
-      if (typeof parsed.player_code === "string") {
-        return participants.find((p) => p.player_code === parsed.player_code)?.player_id ?? null;
-      }
-    } catch {
-      // plain code
-    }
-
     return participants.find((p) => p.player_code === trimmed)?.player_id ?? null;
   };
 
   const resolveConfirmerByInput = (raw: string): ScannedCodeInfo | null => {
     const trimmed = raw.trim();
     if (!trimmed) return null;
-
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      if (typeof parsed.player_code === "string") {
-        return findByCode(parsed.player_code);
-      }
-      if (typeof parsed.admin_code === "string") {
-        return findByCode(parsed.admin_code);
-      }
-    } catch {
-      // plain code
-    }
-
     return findByCode(trimmed);
   };
 
   const extractCodeFromQrPayload = (raw: string): string => {
     const trimmed = raw.trim();
     if (!trimmed) return "";
-
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-
-      if (typeof parsed.player_code === "string") return parsed.player_code;
-      if (typeof parsed.admin_code === "string") return parsed.admin_code;
-      if (typeof parsed.participant_code === "string") return parsed.participant_code;
-      if (typeof parsed.code === "string") return parsed.code;
-
-      if (typeof parsed.player_id === "string") {
-        const playerCode = participants.find((p) => p.player_id === parsed.player_id)?.player_code;
-        if (playerCode) return playerCode;
-      }
-
-      if (typeof parsed.admin_id === "string") {
-        const adminCode = admins.find((a) => a.admin_id === parsed.admin_id)?.admin_code;
-        if (adminCode) return adminCode;
-      }
-    } catch {
-      // plain code
-    }
-
     return trimmed;
   };
 
@@ -820,6 +772,10 @@ export function BracketPage() {
         </div>
       </div>
 
+      <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+        カードを開く: カード内の任意の場所をクリック / シード入れ替え: Ctrlを押しながらプレイヤー名をドラッグ&ドロップ
+      </div>
+
       {/* Add player panel */}
       {showAddPlayer && tournament.status === "in_progress" && !isReadOnly && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
@@ -962,12 +918,12 @@ export function BracketPage() {
             </div>
 
             <div className="mb-4 p-3 rounded-lg border border-indigo-200 bg-indigo-50">
-              <label className="text-xs text-indigo-700 block mb-1">プレイヤーコードで検索 (手入力 / QR)</label>
+              <label className="text-xs text-indigo-700 block mb-1">プレイヤーコードで検索 (手入力 / 2次元バーコード)</label>
               <div className="flex gap-2">
                 <input
                   value={searchCodeInput}
                   onChange={(e) => setSearchCodeInput(e.target.value)}
-                  placeholder="プレイヤーコード or QR JSON"
+                  placeholder="プレイヤーコード"
                   className="flex-1 px-3 py-2 text-sm border border-indigo-300 rounded-lg bg-white font-mono"
                 />
                 <button
@@ -1335,7 +1291,7 @@ export function BracketPage() {
                         <input
                           value={confirmAuthCode}
                           onChange={(e) => setConfirmAuthCode(e.target.value)}
-                          placeholder="コード入力またはQRスキャン"
+                          placeholder="コード入力または2次元バーコードスキャン"
                           className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs font-mono"
                         />
                         <button
@@ -1379,8 +1335,8 @@ export function BracketPage() {
         open={scanTarget !== null}
         title={
           scanTarget === "search"
-            ? "試合検索用QRスキャン"
-            : "確認コードのQRスキャン"
+            ? "試合検索用2次元バーコードスキャン"
+            : "確認コードの2次元バーコードスキャン"
         }
         onClose={() => setScanTarget(null)}
         onDetected={handleDetectedQr}

@@ -85,6 +85,7 @@ function MatchCard({
       !(draggingFrom?.matchId === match.id && draggingFrom?.slot === slot);
     return {
       onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!e.ctrlKey) return;
         e.preventDefault();
         e.stopPropagation();
         suppressNextCardClickRef.current = true;
@@ -95,6 +96,7 @@ function MatchCard({
         onPlayerDragStart?.({ matchId: match.id, slot, playerId });
       },
       onMouseUp: (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!draggingFrom) return;
         e.stopPropagation();
         suppressNextCardClickRef.current = true;
         if (isTarget) {
@@ -104,7 +106,8 @@ function MatchCard({
         onDragEnd?.();
       },
       onClick: (e: React.MouseEvent<HTMLDivElement>) => {
-        // プレイヤー行の操作ではカード詳細ダイアログを開かない
+        // Ctrl操作時のみカードクリックを抑制し、通常クリックはカード詳細を開く
+        if (!draggingFrom) return;
         e.preventDefault();
         e.stopPropagation();
       },
@@ -126,7 +129,9 @@ function MatchCard({
       style: isSourceSlot ? { opacity: 0.4 } : undefined,
       role: "button" as const,
       tabIndex: 0,
+      title: isDraggable ? "Ctrl+ドラッグでシードを入れ替え" : undefined,
       onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!e.ctrlKey) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (!canDragSlot) {
@@ -137,6 +142,7 @@ function MatchCard({
         }
       },
       onKeyUp: (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!e.ctrlKey || !draggingFrom) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (isTarget) {
