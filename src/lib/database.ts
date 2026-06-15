@@ -111,6 +111,7 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS tournament (
       id                 TEXT PRIMARY KEY,
+      event_code         TEXT NOT NULL DEFAULT '00',
       tournament_code    TEXT NOT NULL DEFAULT '0000',
       type               TEXT NOT NULL,
       max_participants   INTEGER NOT NULL DEFAULT 256,
@@ -207,6 +208,9 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_selection_config_json TEXT`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN event_code TEXT NOT NULL DEFAULT '00'`);
   } catch { /* exists */ }
 
   // Migration: add per-tournament participant fields
@@ -461,6 +465,7 @@ function rowToTournament(row: TournamentRow): Tournament {
   return {
     id: row.id,
     name: row.name,
+    event_code: row.event_code ?? "00",
     tournament_code: row.tournament_code ?? "0000",
     type: row.type,
     max_participants: row.max_participants,
@@ -512,6 +517,7 @@ export async function getTournament(): Promise<Tournament | null> {
 
 export async function createTournament(
   id: string,
+  event_code: string,
   tournament_code: string,
   type: "single_elimination" | "double_elimination",
   max_participants: number,
@@ -539,11 +545,12 @@ export async function createTournament(
     : null;
   const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
-    `INSERT INTO tournament (id, name, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, character_selection_config_json, created_at)
-     VALUES ($1, $2, $3, $4, $5, 'setup', $6, $7, $8, $9, $10, $11, $12)`,
+    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, character_selection_config_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13)`,
     [
       id,
       name,
+      event_code,
       tournament_code,
       type,
       max_participants,
@@ -579,6 +586,7 @@ export async function updateGrandFinalReset(
 
 export async function updateTournamentSettings(
   id: string,
+  event_code: string,
   tournament_code: string,
   type: "single_elimination" | "double_elimination",
   max_participants: number,
@@ -607,17 +615,19 @@ export async function updateTournamentSettings(
   await db.execute(
     `UPDATE tournament
      SET type = $1,
-         tournament_code = $2,
-         max_participants = $3,
-         grand_final_reset = $4,
-         character_input_mode = $5,
-         default_player_side = $6,
-         character_list_name = $7,
-         character_list_json = $8,
-         character_selection_config_json = $9
-     WHERE id = $10`,
+         event_code = $2,
+         tournament_code = $3,
+         max_participants = $4,
+         grand_final_reset = $5,
+         character_input_mode = $6,
+         default_player_side = $7,
+         character_list_name = $8,
+         character_list_json = $9,
+         character_selection_config_json = $10
+     WHERE id = $11`,
     [
       type,
+      event_code,
       tournament_code,
       max_participants,
       grand_final_reset ? 1 : 0,
