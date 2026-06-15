@@ -23,7 +23,6 @@ export function BracketPage() {
     matches: tournamentMatches,
     participants,
     admins,
-    characters,
     trees,
     roundLocks,
     isReadOnly,
@@ -32,7 +31,6 @@ export function BracketPage() {
     setMatchReady,
     setMatchCharacters,
     correctScore,
-    addParticipantAndAssign,
     swapMatchSides,
     randomizeMatchSides,
     isRoundLocked,
@@ -58,13 +56,6 @@ export function BracketPage() {
     match: Match; p1Wins: number; p2Wins: number; dqPlayerIds: string[]; forcedLoserId: string | null;
   } | null>(null);
 
-  // Add player state
-  const [showAddPlayer, setShowAddPlayer] = useState(false);
-  const [newPlayerName, setNewPlayerName] = useState("");
-  const [newPlayerCharacter, setNewPlayerCharacter] = useState("");
-  const [newPlayerTreeId, setNewPlayerTreeId] = useState<string>("");
-  const [addingPlayer, setAddingPlayer] = useState(false);
-
   // Match search dialog state
   const [showMatchSearch, setShowMatchSearch] = useState(false);
   const [searchPlayerId, setSearchPlayerId] = useState<string>("all");
@@ -82,8 +73,6 @@ export function BracketPage() {
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
   const adminMap = new Map(admins.map((a) => [a.admin_id, a]));
-  const isCharacterListMode = tournament?.character_input_mode === "list_selection";
-  const tournamentCharacterOptions = tournament?.character_list ?? [];
   const maxParticipants = tournament?.max_participants ?? 0;
 
   const incomingBySlot = buildIncomingBySlot(tournamentMatches);
@@ -177,9 +166,6 @@ export function BracketPage() {
         .filter((r) => r.tree_id === treeId && r.bracket === bracket)
         .map((r) => r.round)
     );
-
-  const isAddTargetLocked =
-    !!newPlayerTreeId && isRoundLocked(newPlayerTreeId, "winners", 1);
 
   const canAddToTree = (treeId: string) => {
     if (isRoundLocked(treeId, "winners", 1)) return false;
@@ -686,31 +672,6 @@ export function BracketPage() {
     return parsed.toLocaleString("ja-JP", { hour12: false });
   };
 
-  const handleAddPlayer = async () => {
-    if (!newPlayerName.trim() || !newPlayerTreeId) return;
-    const targetRound = 1;
-    if (isRoundLocked(newPlayerTreeId, "winners", targetRound)) {
-      alert(`Round ${targetRound} は確定済みのため追加できません`);
-      return;
-    }
-    setAddingPlayer(true);
-    try {
-      await addParticipantAndAssign(
-        newPlayerName.trim(),
-        newPlayerCharacter.trim() || null,
-        "winners",
-        newPlayerTreeId
-      );
-      setNewPlayerName("");
-      setNewPlayerCharacter("");
-      setShowAddPlayer(false);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "プレイヤー追加に失敗しました");
-    } finally {
-      setAddingPlayer(false);
-    }
-  };
-
   const handlePlayerDragStart = (state: DragState | null) => {
     dragSourceRef.current = state;
     setDraggingFrom(state);
@@ -795,9 +756,6 @@ export function BracketPage() {
     setScanTarget(null);
   };
 
-  // Default tree for add player panel
-  const defaultTreeId = trees[0]?.id ?? "";
-
   if (!tournament) {
     return (
       <div className="p-6">
@@ -847,8 +805,7 @@ export function BracketPage() {
             <button
               onClick={() => {
                 if (!canOpenAddPlayer) return;
-                setNewPlayerTreeId(defaultTreeId);
-                setShowAddPlayer((v) => !v);
+                navigate("/tournament/setup");
               }}
               disabled={!canOpenAddPlayer}
               className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
@@ -880,98 +837,6 @@ export function BracketPage() {
       <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
         カードを開く: カード内の任意の場所をクリック / シード入れ替え: Ctrlを押しながらプレイヤー名をドラッグ&ドロップ
       </div>
-
-      {/* Add player panel */}
-      {showAddPlayer && tournament.status === "in_progress" && !isReadOnly && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-          <h3 className="text-sm font-bold text-blue-800 mb-3">新規プレイヤーをブラケットに追加</h3>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-blue-700">プレイヤー名</label>
-              <input
-                type="text"
-                value={newPlayerName}
-                onChange={(e) => setNewPlayerName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddPlayer()}
-                placeholder="名前を入力..."
-                className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-48"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-blue-700">使用キャラ</label>
-              {isCharacterListMode ? (
-                <select
-                  value={newPlayerCharacter}
-                  onChange={(e) => setNewPlayerCharacter(e.target.value)}
-                  className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 w-48"
-                >
-                  <option value="">使用キャラを選択</option>
-                  {tournamentCharacterOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <input
-                    type="text"
-                    value={newPlayerCharacter}
-                    onChange={(e) => setNewPlayerCharacter(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAddPlayer()}
-                    list="character-master-options-bracket-add-player"
-                    placeholder="任意（候補から選択 or 自由入力）"
-                    className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-48"
-                  />
-                  <datalist id="character-master-options-bracket-add-player">
-                    {characters.map((c) => (
-                      <option key={c.id} value={c.name} />
-                    ))}
-                  </datalist>
-                </>
-              )}
-            </div>
-            {trees.length > 1 && (
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-blue-700">ツリー</label>
-                <select
-                  value={newPlayerTreeId}
-                  onChange={(e) => setNewPlayerTreeId(e.target.value)}
-                  className="px-3 py-1.5 text-sm border border-blue-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                >
-                  {trees.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <button
-              onClick={handleAddPlayer}
-              disabled={
-                addingPlayer ||
-                !newPlayerName.trim() ||
-                !newPlayerTreeId ||
-                participants.length >= tournament.max_participants ||
-                isAddTargetLocked ||
-                (isCharacterListMode && !newPlayerCharacter.trim())
-              }
-              className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50"
-            >
-              {addingPlayer ? "追加中..." : "追加"}
-            </button>
-            <button
-              onClick={() => setShowAddPlayer(false)}
-              className="px-3 py-1.5 text-sm bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded-lg"
-            >
-              キャンセル
-            </button>
-          </div>
-          <p className="text-xs text-blue-600 mt-2">
-            ※ 奇数人数のラウンドがある場合、余剰スロットに自動で割り当てられます
-          </p>
-          <p className="text-xs text-blue-600 mt-1">
-            ※ ラウンド見出しをクリックすると確定/解除できます。確定済みラウンドには追加できません。
-          </p>
-        </div>
-      )}
 
       {/* Match search dialog */}
       {showMatchSearch && (

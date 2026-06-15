@@ -8,7 +8,7 @@ import type {
 } from "../lib/types";
 import { computePlayerRankings } from "../lib/ranking";
 import { buildDuplicateName, parseLinesToUniqueList } from "../lib/characterListUtils";
-import { normalizeTournamentCode } from "../lib/playerCode";
+import { normalizeEventCode, normalizeTournamentCode } from "../lib/playerCode";
 
 type CharacterCategoryDraft = {
   categoryName: string;
@@ -104,6 +104,7 @@ export function TournamentSetupPage() {
     createNew,
     removeTournament,
     addParticipant,
+    addParticipantAndAssign,
     editParticipantName,
     setParticipantCharacter,
     setParticipantSelectedCharacters,
@@ -113,6 +114,7 @@ export function TournamentSetupPage() {
     generateBracket,
     updateTournamentSettings,
     finalizeTournament,
+    trees,
   } = useAppContext();
 
   const navigate = useNavigate();
@@ -120,6 +122,7 @@ export function TournamentSetupPage() {
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
+  const [createEventCode, setCreateEventCode] = useState("00");
   const [createTournamentCode, setCreateTournamentCode] = useState("0000");
   const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
   const [maxP, setMaxP] = useState(8);
@@ -137,6 +140,7 @@ export function TournamentSetupPage() {
 
   // --- 設定編集 (setup フェーズ) ---
   const [editSettings, setEditSettings] = useState(false);
+  const [editEventCode, setEditEventCode] = useState("00");
   const [editTournamentCode, setEditTournamentCode] = useState("0000");
   const [editType, setEditType] = useState<"single_elimination" | "double_elimination">("single_elimination");
   const [editMaxP, setEditMaxP] = useState(256);
@@ -173,6 +177,82 @@ export function TournamentSetupPage() {
     () => computePlayerRankings(participants, matches),
     [participants, matches]
   );
+  const characterUsageStatsByCategory = useMemo(() => {
+    if (!tournament || tournament.character_input_mode === "free_input") return [];
+    if (participants.length === 0) return [];
+    const categories = tournament.character_selection_config?.categories;
+
+    if (!categories || categories.length === 0) {
+      const usageByCharacter = new Map<string, number>();
+      for (const p of participants) {
+        const name = p.character_name?.trim();
+        if (!name) continue;
+        usageByCharacter.set(name, (usageByCharacter.get(name) ?? 0) + 1);
+      }
+
+      const rows = [...usageByCharacter.entries()]
+        .map(([name, playerCount]) => ({
+          name,
+          playerCount,
+          usageRate: (playerCount / participants.length) * 100,
+        }))
+        .sort((a, b) => {
+          if (b.playerCount !== a.playerCount) return b.playerCount - a.playerCount;
+          return a.name.localeCompare(b.name, "ja");
+        });
+
+      return [{
+        categoryId: "legacy_single_select",
+        categoryName: "使用キャラ",
+        rows,
+      }];
+    }
+
+    return categories.map((cat) => {
+      const usageByCharacter = new Map<string, number>();
+
+      for (const p of participants) {
+        const uniqueSelection = new Set<string>();
+        const selected = p.selected_characters?.[cat.category_id] ?? [];
+
+        for (const rawName of selected) {
+          const name = rawName.trim();
+          if (name) uniqueSelection.add(name);
+        }
+
+        for (const name of uniqueSelection) {
+          usageByCharacter.set(name, (usageByCharacter.get(name) ?? 0) + 1);
+        }
+      }
+
+      const rows = [...usageByCharacter.entries()]
+        .map(([name, playerCount]) => ({
+          name,
+          playerCount,
+          usageRate: (playerCount / participants.length) * 100,
+        }))
+        .sort((a, b) => {
+          if (b.playerCount !== a.playerCount) return b.playerCount - a.playerCount;
+          return a.name.localeCompare(b.name, "ja");
+        });
+
+      return {
+        categoryId: cat.category_id,
+        categoryName: cat.category_name,
+        rows,
+      };
+    });
+  }, [tournament, participants]);
+  const maxCharacterUsageRate = useMemo(() => {
+    let maxRate = 0;
+    for (const category of characterUsageStatsByCategory) {
+      for (const row of category.rows) {
+        if (row.usageRate > maxRate) maxRate = row.usageRate;
+      }
+    }
+    return maxRate;
+  }, [characterUsageStatsByCategory]);
+  const defaultTreeId = trees[0]?.id ?? "";
 
   useEffect(() => {
     if (!seedRandomizeNotice) return;
@@ -188,6 +268,11 @@ export function TournamentSetupPage() {
   const generateRandomTournamentCode = () => {
     const value = Math.floor(Math.random() * 10000);
     return value.toString().padStart(4, "0");
+  };
+
+  const generateRandomEventCode = () => {
+    const value = Math.floor(Math.random() * 100);
+    return value.toString().padStart(2, "0");
   };
 
   const collectUsedCharacters = (): string[] => {
@@ -293,6 +378,7 @@ export function TournamentSetupPage() {
     setCreating(true);
     try {
       await createNew(
+        createEventCode,
         tournamentCode,
         type,
         maxP,
@@ -312,6 +398,7 @@ export function TournamentSetupPage() {
   const handleOpenSettings = () => {
     if (!tournament) return;
     setEditType(tournament.type);
+    setEditEventCode(tournament.event_code ?? "00");
     setEditTournamentCode(tournament.tournament_code ?? "0000");
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
@@ -366,6 +453,7 @@ export function TournamentSetupPage() {
     setSavingSettings(true);
     try {
       await updateTournamentSettings(
+        editEventCode,
         tournamentCode,
         editType,
         editMaxP,
@@ -411,7 +499,18 @@ export function TournamentSetupPage() {
           }
           await setParticipantSelectedCharacters(editingTarget.player_id, addSelectedCharacters);
         } else {
-          await addParticipant(addName.trim(), firstChar, {}, addSelectedCharacters);
+          if (tournament.status === "in_progress") {
+            if (!defaultTreeId) throw new Error("追加先のブラケットツリーが見つかりません");
+            await addParticipantAndAssign(
+              addName.trim(),
+              firstChar,
+              "winners",
+              defaultTreeId,
+              addSelectedCharacters
+            );
+          } else {
+            await addParticipant(addName.trim(), firstChar, {}, addSelectedCharacters);
+          }
         }
         resetParticipantForm();
       } catch (err) {
@@ -438,7 +537,17 @@ export function TournamentSetupPage() {
             await setParticipantSelectedCharacters(editingTarget.player_id, {});
           }
         } else {
-          await addParticipant(addName.trim(), nextCharacter, {});
+          if (tournament.status === "in_progress") {
+            if (!defaultTreeId) throw new Error("追加先のブラケットツリーが見つかりません");
+            await addParticipantAndAssign(
+              addName.trim(),
+              nextCharacter,
+              "winners",
+              defaultTreeId
+            );
+          } else {
+            await addParticipant(addName.trim(), nextCharacter, {});
+          }
         }
         resetParticipantForm();
       } catch (err) {
@@ -461,7 +570,12 @@ export function TournamentSetupPage() {
     }
     const character = isListMode ? (charInList ? p.character_name : null) : p.character_name;
     try {
-      await addParticipant(p.name, character, p.attributes, {}, p.id);
+      if (tournament.status === "in_progress") {
+        if (!defaultTreeId) throw new Error("追加先のブラケットツリーが見つかりません");
+        await addParticipantAndAssign(p.name, character, "winners", defaultTreeId, {}, p.id);
+      } else {
+        await addParticipant(p.name, character, p.attributes, {}, p.id);
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "名簿からの参加者追加に失敗しました");
     }
@@ -498,7 +612,13 @@ export function TournamentSetupPage() {
   };
 
   const handleCreateUsedCharacterList = async () => {
-    if (!tournament || tournament.status !== "finalized") return;
+    if (
+      !tournament ||
+      tournament.status !== "finalized" ||
+      tournament.character_input_mode !== "free_input"
+    ) {
+      return;
+    }
 
     const usedCharacters = collectUsedCharacters();
     if (usedCharacters.length === 0) {
@@ -526,6 +646,28 @@ export function TournamentSetupPage() {
       <div className="p-6 max-w-lg mx-auto">
         <h2 className="text-2xl font-bold text-gray-800 mb-6">新規大会作成</h2>
         <div className="bg-white rounded-xl shadow p-6 border border-gray-200 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (2桁)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={2}
+                value={createEventCode}
+                onChange={(e) => setCreateEventCode(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                placeholder="例: 01"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setCreateEventCode(generateRandomEventCode())}
+                className="shrink-0 px-3 py-2 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
+              >
+                ランダム決定
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">先頭ゼロを保持して 2 桁で扱います。</p>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">大会コード (4桁)</label>
             <div className="flex items-center gap-2">
@@ -831,6 +973,9 @@ export function TournamentSetupPage() {
             デフォルトプレイヤーサイド: {getDefaultPlayerSideLabel(tournament.default_player_side ?? "upper_1p")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
+            イベントコード: <span className="font-mono">{normalizeEventCode(tournament.event_code ?? "00")}</span>
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
             大会コード: <span className="font-mono">{normalizeTournamentCode(tournament.tournament_code ?? "0000")}</span>
           </p>
         </div>
@@ -857,7 +1002,7 @@ export function TournamentSetupPage() {
               {finalizing ? "処理中..." : "✅ 結果を確定する"}
             </button>
           )}
-          {tournament.status === "finalized" && (
+          {tournament.status === "finalized" && tournament.character_input_mode === "free_input" && (
             <>
               <button
                 onClick={handleCreateUsedCharacterList}
@@ -885,6 +1030,27 @@ export function TournamentSetupPage() {
         <div className="mb-4 bg-white rounded-xl shadow border border-blue-200 p-5">
           <h3 className="font-semibold text-gray-700 mb-4">大会設定の編集</h3>
           <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (2桁)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  value={editEventCode}
+                  onChange={(e) => setEditEventCode(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                  placeholder="例: 01"
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditEventCode(generateRandomEventCode())}
+                  className="shrink-0 px-3 py-2 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
+                >
+                  ランダム
+                </button>
+              </div>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">大会コード (4桁)</label>
               <div className="flex items-center gap-2">
@@ -1315,7 +1481,7 @@ export function TournamentSetupPage() {
               </h3>
               {tournament.status === "in_progress" && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
-                  大会進行中です。追加した参加者の試合はブラケット画面から追加してください。
+                  大会進行中です。ここから追加した参加者は Winners Round1 に配置されます。
                 </p>
               )}
               <div className="space-y-2">
@@ -1508,6 +1674,74 @@ export function TournamentSetupPage() {
               </tbody>
             </table>
           </div>
+
+          {tournament.character_input_mode !== "free_input" && (
+            <div className="mt-5 pt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-gray-700">📊 キャラ使用率 statistics</h4>
+                <p className="text-xs text-gray-500">同一プレイヤー内の重複選択は1回として集計</p>
+              </div>
+
+              {characterUsageStatsByCategory.every((category) => category.rows.length === 0) ? (
+                <p className="text-sm text-gray-400">集計対象のキャラクター選択がありません。</p>
+              ) : (
+                <div className="space-y-4">
+                  {characterUsageStatsByCategory.map((category) => (
+                    <div key={category.categoryId} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                      <h5 className="text-sm font-semibold text-gray-700 mb-2">{category.categoryName}</h5>
+                      {category.rows.length === 0 ? (
+                        <p className="text-xs text-gray-400">このカテゴリの選択はありません。</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm table-fixed">
+                            <colgroup>
+                              <col className="w-[46%]" />
+                              <col className="w-[18%]" />
+                              <col className="w-[36%]" />
+                            </colgroup>
+                            <thead>
+                              <tr className="text-left text-gray-500 border-b border-gray-200">
+                                <th className="py-2 pr-3">キャラ</th>
+                                <th className="py-2 pr-3 whitespace-nowrap">使用人数</th>
+                                <th className="py-2">使用率</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {category.rows.map((row) => (
+                                <tr key={`${category.categoryId}-${row.name}`} className="border-b border-gray-100 last:border-b-0">
+                                  <td className="py-2 pr-3 text-gray-800">
+                                    <span className="block truncate" title={row.name}>{row.name}</span>
+                                  </td>
+                                  <td className="py-2 pr-3 font-mono text-gray-700 whitespace-nowrap">{row.playerCount} 名</td>
+                                  <td className="py-2">
+                                    <div className="relative h-6 rounded bg-blue-50 border border-blue-100 overflow-hidden">
+                                      <div
+                                        className="absolute inset-y-0 left-0 bg-blue-400/70"
+                                        style={{
+                                          width: `${maxCharacterUsageRate > 0 ? (row.usageRate / maxCharacterUsageRate) * 100 : 0}%`,
+                                        }}
+                                      />
+                                      <div className="relative z-10 h-full px-2 flex items-center justify-end font-mono text-gray-700">
+                                        {row.usageRate.toFixed(1)}%
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-gray-500 mt-2">
+                分母は参加者総数 ({participants.length}名) です。複数キャラ選択により、使用率合計は100%にならない場合があります。
+              </p>
+            </div>
+          )}
         </div>
       )}
 

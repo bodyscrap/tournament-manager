@@ -75,6 +75,7 @@ export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
 export interface Tournament {
   id: string;
   name: string;
+  event_code: string;
   tournament_code: string;
   type: TournamentType;
   max_participants: number;
@@ -91,6 +92,7 @@ export interface Tournament {
 export interface TournamentRow {
   id: string;
   name: string;
+  event_code: string;
   tournament_code: string;
   type: TournamentType;
   max_participants: number;
