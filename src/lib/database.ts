@@ -22,11 +22,13 @@ import type {
   BracketTreeRow,
   MatchBracket,
   CharacterInputMode,
+  TournamentCharacterSelectionConfig,
   TournamentDefaultPlayerSide,
   RoundLock,
   RoundLockRow,
   MatchPlayerSide,
 } from "./types";
+import { normalizeCharacterSelectionConfig } from "./characterSelection";
 
 // ----------------------
 // Singleton DB connection
@@ -117,6 +119,7 @@ async function initSchema(db: Database): Promise<void> {
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
       default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
       character_list_json TEXT,
+      character_selection_config_json TEXT,
       created_at         TEXT NOT NULL
     );
   `);
@@ -202,6 +205,9 @@ async function initSchema(db: Database): Promise<void> {
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_list_json TEXT`);
   } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN character_selection_config_json TEXT`);
+  } catch { /* exists */ }
 
   // Migration: add per-tournament participant fields
   try {
@@ -224,6 +230,9 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament_players ADD COLUMN player_id_4 TEXT NOT NULL DEFAULT '0000'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament_players ADD COLUMN selected_characters_json TEXT`);
   } catch { /* exists */ }
   // Migration: add tree_id to matches
   try {
@@ -428,6 +437,27 @@ function rowToTournament(row: TournamentRow): Tournament {
       // ignore invalid json
     }
   }
+
+  let parsedConfig: TournamentCharacterSelectionConfig | null = null;
+  if (row.character_selection_config_json) {
+    try {
+      parsedConfig = JSON.parse(row.character_selection_config_json);
+    } catch {
+      parsedConfig = null;
+    }
+  }
+
+  const normalizedConfig = normalizeCharacterSelectionConfig(
+    row.character_input_mode ?? "free_input",
+    parsedConfig,
+    row.character_list_name ?? null,
+    characterList
+  );
+
+  const flattenedCharacterList = normalizedConfig.categories.length > 0
+    ? [...new Set(normalizedConfig.categories.flatMap((cat) => cat.list))]
+    : characterList;
+
   return {
     id: row.id,
     name: row.name,
@@ -438,7 +468,8 @@ function rowToTournament(row: TournamentRow): Tournament {
     grand_final_reset: row.grand_final_reset === 1,
     character_input_mode: row.character_input_mode ?? "free_input",
     character_list_name: row.character_list_name ?? null,
-    character_list: characterList,
+    character_list: flattenedCharacterList,
+    character_selection_config: normalizedConfig,
     default_player_side: row.default_player_side ?? "upper_1p",
     created_at: row.created_at,
   };
@@ -489,15 +520,27 @@ export async function createTournament(
   character_input_mode: CharacterInputMode,
   character_list_name: string | null,
   character_list: string[],
+  character_selection_config: TournamentCharacterSelectionConfig | null,
   default_player_side: TournamentDefaultPlayerSide
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
-  const listJson = character_input_mode === "list_selection" ? JSON.stringify(normalizedList) : null;
-  const listName = character_input_mode === "list_selection" ? (character_list_name?.trim() || "カスタムリスト") : null;
+  const normalizedConfig = normalizeCharacterSelectionConfig(
+    character_input_mode,
+    character_selection_config,
+    character_list_name,
+    normalizedList
+  );
+  const listJson = character_input_mode === "list_selection"
+    ? JSON.stringify([...new Set(normalizedConfig.categories.flatMap((cat) => cat.list))])
+    : null;
+  const listName = character_input_mode === "list_selection"
+    ? (character_list_name?.trim() || normalizedConfig.categories[0]?.list_name || "カスタムリスト")
+    : null;
+  const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
-    `INSERT INTO tournament (id, name, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, created_at)
-     VALUES ($1, $2, $3, $4, $5, 'setup', $6, $7, $8, $9, $10, $11)`,
+    `INSERT INTO tournament (id, name, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, character_selection_config_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, 'setup', $6, $7, $8, $9, $10, $11, $12)`,
     [
       id,
       name,
@@ -509,6 +552,7 @@ export async function createTournament(
       default_player_side,
       listName,
       listJson,
+      selectionConfigJson,
       new Date().toISOString(),
     ]
   );
@@ -542,12 +586,24 @@ export async function updateTournamentSettings(
   character_input_mode: CharacterInputMode,
   character_list_name: string | null,
   character_list: string[],
+  character_selection_config: TournamentCharacterSelectionConfig | null,
   default_player_side: TournamentDefaultPlayerSide
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
-  const listJson = character_input_mode === "list_selection" ? JSON.stringify(normalizedList) : null;
-  const listName = character_input_mode === "list_selection" ? (character_list_name?.trim() || "カスタムリスト") : null;
+  const normalizedConfig = normalizeCharacterSelectionConfig(
+    character_input_mode,
+    character_selection_config,
+    character_list_name,
+    normalizedList
+  );
+  const listJson = character_input_mode === "list_selection"
+    ? JSON.stringify([...new Set(normalizedConfig.categories.flatMap((cat) => cat.list))])
+    : null;
+  const listName = character_input_mode === "list_selection"
+    ? (character_list_name?.trim() || normalizedConfig.categories[0]?.list_name || "カスタムリスト")
+    : null;
+  const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
     `UPDATE tournament
      SET type = $1,
@@ -557,9 +613,21 @@ export async function updateTournamentSettings(
          character_input_mode = $5,
          default_player_side = $6,
          character_list_name = $7,
-         character_list_json = $8
-     WHERE id = $9`,
-    [type, tournament_code, max_participants, grand_final_reset ? 1 : 0, character_input_mode, default_player_side, listName, listJson, id]
+         character_list_json = $8,
+         character_selection_config_json = $9
+     WHERE id = $10`,
+    [
+      type,
+      tournament_code,
+      max_participants,
+      grand_final_reset ? 1 : 0,
+      character_input_mode,
+      default_player_side,
+      listName,
+      listJson,
+      selectionConfigJson,
+      id,
+    ]
   );
 }
 
@@ -580,6 +648,10 @@ export async function deleteTournament(id: string): Promise<void> {
 function rowToTournamentPlayer(row: TournamentPlayerRow): TournamentPlayer {
   let attributes: Record<string, string> = {};
   try { attributes = JSON.parse(row.attributes); } catch { /* ignore */ }
+  let selectedCharacters: Record<string, string[]> = {};
+  if (row.selected_characters_json) {
+    try { selectedCharacters = JSON.parse(row.selected_characters_json); } catch { /* ignore */ }
+  }
   return {
     tournament_id: row.tournament_id,
     player_id: row.player_id,
@@ -589,6 +661,7 @@ function rowToTournamentPlayer(row: TournamentPlayerRow): TournamentPlayer {
     seed: row.seed,
     name: row.name,
     character_name: row.character_name,
+    selected_characters: selectedCharacters,
     attributes,
     dq: row.dq === 1,
   };
@@ -614,23 +687,25 @@ export async function addTournamentPlayer(
   seed: number,
   name: string,
   character_name: string | null,
-  attributes: Record<string, string>
+  attributes: Record<string, string>,
+  selected_characters: Record<string, string[]> = {}
 ): Promise<void> {
   const db = await getDb();
+  const selectedCharactersJson = JSON.stringify(selected_characters);
   try {
     await db.execute(
       `INSERT OR REPLACE INTO tournament_players
-       (tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, attributes, dq)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)`,
-      [tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, JSON.stringify(attributes)]
+       (tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, selected_characters_json, attributes, dq)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)`,
+      [tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, selectedCharactersJson, JSON.stringify(attributes)]
     );
   } catch {
     // Fallback for legacy schema that does not yet have player code columns.
     await db.execute(
       `INSERT OR REPLACE INTO tournament_players
-       (tournament_id, player_id, seed, name, character_name, attributes, dq)
-       VALUES ($1, $2, $3, $4, $5, $6, 0)`,
-      [tournament_id, player_id, seed, name, character_name, JSON.stringify(attributes)]
+       (tournament_id, player_id, seed, name, character_name, selected_characters_json, attributes, dq)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
+      [tournament_id, player_id, seed, name, character_name, selectedCharactersJson, JSON.stringify(attributes)]
     );
   }
 }
@@ -851,6 +926,18 @@ export async function updateTournamentPlayerCharacter(
   await db.execute(
     `UPDATE tournament_players SET character_name = $1 WHERE tournament_id = $2 AND player_id = $3`,
     [character_name, tournament_id, player_id]
+  );
+}
+
+export async function updateTournamentPlayerSelectedCharacters(
+  tournament_id: string,
+  player_id: string,
+  selected_characters: Record<string, string[]>
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE tournament_players SET selected_characters_json = $1 WHERE tournament_id = $2 AND player_id = $3`,
+    [JSON.stringify(selected_characters), tournament_id, player_id]
   );
 }
 

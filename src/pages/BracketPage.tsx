@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { BracketSection } from "../components/bracket/BracketSection";
 import { QrScannerDialog } from "../components/common/QrScannerDialog";
@@ -16,6 +17,7 @@ type ScannedCodeInfo = {
 };
 
 export function BracketPage() {
+  const navigate = useNavigate();
   const {
     tournament,
     matches: tournamentMatches,
@@ -70,6 +72,9 @@ export function BracketPage() {
   const [searchCodeInput, setSearchCodeInput] = useState("");
   const [confirmAuthCode, setConfirmAuthCode] = useState("");
   const [scanTarget, setScanTarget] = useState<"search" | "auth" | null>(null);
+  const [detailPlayerId, setDetailPlayerId] = useState<string | null>(null);
+  const [sideRandomizeNotice, setSideRandomizeNotice] = useState<"changed" | "unchanged" | null>(null);
+  const [sideRandomizeNoticeVisible, setSideRandomizeNoticeVisible] = useState(false);
 
   // Drag-and-drop state
   const [draggingFrom, setDraggingFrom] = useState<DragState | null>(null);
@@ -83,6 +88,17 @@ export function BracketPage() {
 
   const incomingBySlot = buildIncomingBySlot(tournamentMatches);
   const treeNameById = new Map(trees.map((t) => [t.id, t.name]));
+
+  useEffect(() => {
+    if (!sideRandomizeNotice) return;
+    setSideRandomizeNoticeVisible(true);
+    const fadeTimer = window.setTimeout(() => setSideRandomizeNoticeVisible(false), 1200);
+    const clearTimer = window.setTimeout(() => setSideRandomizeNotice(null), 1800);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [sideRandomizeNotice]);
 
   const getMatchDisplayTitle = (m: Match) => {
     const bracketLabel =
@@ -208,6 +224,8 @@ export function BracketPage() {
     setPendingEdit(null);
     setConfirmingBye(false);
     setPendingBye(null);
+    setSideRandomizeNotice(null);
+    setSideRandomizeNoticeVisible(false);
   };
 
   const computeNewWinner = (
@@ -475,6 +493,8 @@ export function BracketPage() {
     setSaving(true);
     try {
       await swapMatchSides(selectedMatch.id);
+      setSideRandomizeNotice(null);
+      setSideRandomizeNoticeVisible(false);
       setSelectedMatch((prev) =>
         prev
           ? {
@@ -491,9 +511,15 @@ export function BracketPage() {
 
   const handleRandomizeSides = async () => {
     if (!selectedMatch || isReadOnly) return;
+    const prevP1Side = selectedMatch.player1_side;
+    const prevP2Side = selectedMatch.player2_side;
     setSaving(true);
     try {
       const nextSides = await randomizeMatchSides(selectedMatch.id);
+      const changed =
+        nextSides.player1_side !== prevP1Side ||
+        nextSides.player2_side !== prevP2Side;
+      setSideRandomizeNotice(changed ? "changed" : "unchanged");
       setSelectedMatch((prev) =>
         prev
           ? {
@@ -567,11 +593,90 @@ export function BracketPage() {
     setConfirmAuthCode("");
     setP1CharName("");
     setP2CharName("");
+    setSideRandomizeNotice(null);
+    setSideRandomizeNoticeVisible(false);
   };
 
   const getPlayerName = (id: string | null, hasIncomingFeeder = false) => {
     if (!id) return hasIncomingFeeder ? "TBD" : "BYE";
     return playerMap.get(id)?.name ?? id.slice(0, 8) + "…";
+  };
+
+  const openParticipantDetail = (playerId: string | null) => {
+    if (!playerId || playerId.startsWith("dummy-")) return;
+    setDetailPlayerId(playerId);
+  };
+
+  const openParticipantEdit = (playerId: string | null) => {
+    if (!playerId || playerId.startsWith("dummy-")) return;
+    closeModal();
+    setDetailPlayerId(null);
+    navigate(`/tournament/setup?editParticipantId=${encodeURIComponent(playerId)}`);
+  };
+
+  const renderParticipantDetailDialog = () => {
+    if (!detailPlayerId || !tournament?.character_selection_config) return null;
+
+    const target = participants.find((p) => p.player_id === detailPlayerId);
+    if (!target) return null;
+
+    const totalSelected = tournament.character_selection_config.categories.reduce(
+      (sum, cat) => sum + (target.selected_characters?.[cat.category_id]?.length ?? 0),
+      0
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800">参加者詳細</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                参加者No. {target.seed} / {target.name}
+              </p>
+            </div>
+            <button
+              onClick={() => setDetailPlayerId(null)}
+              className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
+            >
+              閉じる
+            </button>
+          </div>
+
+          <p className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1 mb-3">
+            トータル現在の選択: {totalSelected} / {tournament.character_selection_config.total_max_select} (最小 {tournament.character_selection_config.total_min_select})
+          </p>
+
+          <div className="space-y-3">
+            {tournament.character_selection_config.categories.map((cat) => {
+              const selected = target.selected_characters?.[cat.category_id] ?? [];
+              return (
+                <div key={cat.category_id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                  <p className="text-sm font-semibold text-gray-700 mb-1">{cat.category_name}</p>
+                  <p className="text-xs text-gray-500 mb-2">
+                    現在の選択: {selected.length} / {cat.max_select} (最小 {cat.min_select})
+                  </p>
+                  {selected.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selected.map((name, index) => (
+                        <span
+                          key={`${cat.category_id}-${index}-${name}`}
+                          className="text-xs bg-blue-100 text-blue-700 rounded px-2 py-1"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400">未選択</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const formatDateTime = (value: string | null | undefined) => {
@@ -1067,15 +1172,7 @@ export function BracketPage() {
               <>
                 {!isReadOnly && selectedMatch.status !== "completed" && (
                   <div className="mb-3">
-                    {getUiMatchState(selectedMatch, incomingBySlot) === "ready" ? (
-                      <button
-                        onClick={handleSetInProgress}
-                        disabled={saving}
-                        className="w-full px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm font-medium disabled:opacity-50"
-                      >
-                        {saving ? "処理中..." : "試合中にする"}
-                      </button>
-                    ) : getUiMatchState(selectedMatch, incomingBySlot) === "in_progress" ? (
+                    {getUiMatchState(selectedMatch, incomingBySlot) === "in_progress" ? (
                       <button
                         onClick={handleSetReady}
                         disabled={saving}
@@ -1109,31 +1206,62 @@ export function BracketPage() {
                     </div>
 
                     <div className="space-y-2 rounded-lg border border-gray-200 p-3">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="font-medium text-gray-700">
+                      <div className="flex items-center justify-between text-sm gap-2">
+                        <span className="font-medium text-gray-700 min-w-0 truncate">
                           {getPlayerName(selectedMatch.player1_id, incoming.slot1)}
                         </span>
-                        <span className="font-mono text-gray-600">{selectedMatch.player1_wins}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openParticipantDetail(selectedMatch.player1_id)}
+                            disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
+                            className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-40"
+                          >
+                            詳細
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openParticipantEdit(selectedMatch.player1_id)}
+                            disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
+                            className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40"
+                          >
+                            編集
+                          </button>
+                          <span className="font-mono text-gray-600">{selectedMatch.player1_wins}</span>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-500 -mt-1">
-                        使用キャラ: {selectedMatch.player1_character_name?.trim() || "-"}
-                      </p>
 
-                      <div className="flex items-center justify-between text-sm mt-2">
-                        <span className="font-medium text-gray-700">
+                      <div className="flex items-center justify-between text-sm gap-2 mt-2">
+                        <span className="font-medium text-gray-700 min-w-0 truncate">
                           {getPlayerName(selectedMatch.player2_id, incoming.slot2)}
                         </span>
-                        <span className="font-mono text-gray-600">{selectedMatch.player2_wins}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openParticipantDetail(selectedMatch.player2_id)}
+                            disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
+                            className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-40"
+                          >
+                            詳細
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openParticipantEdit(selectedMatch.player2_id)}
+                            disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
+                            className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40"
+                          >
+                            編集
+                          </button>
+                          <span className="font-mono text-gray-600">{selectedMatch.player2_wins}</span>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-500 -mt-1">
-                        使用キャラ: {selectedMatch.player2_character_name?.trim() || "-"}
-                      </p>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-3 mb-4">
                     {canEditSides && (
-                      <div className="grid grid-cols-2 gap-2 mb-1">
+                      <>
+                      <div className="grid grid-cols-3 gap-2 mb-1">
                         <button
                           onClick={handleSwapSides}
                           disabled={saving}
@@ -1148,7 +1276,28 @@ export function BracketPage() {
                         >
                           1P / 2P ランダム決定
                         </button>
+                        <button
+                          onClick={handleSetInProgress}
+                          disabled={saving}
+                          className="px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-xs font-medium disabled:opacity-50"
+                        >
+                          {saving ? "処理中..." : "試合中にする"}
+                        </button>
                       </div>
+                      {sideRandomizeNotice && (
+                        <p
+                          className={`text-[11px] transition-opacity duration-700 ${
+                            sideRandomizeNoticeVisible ? "opacity-100" : "opacity-0"
+                          } ${
+                            sideRandomizeNotice === "changed" ? "text-emerald-700" : "text-amber-700"
+                          }`}
+                        >
+                          {sideRandomizeNotice === "changed"
+                            ? "1P/2Pランダム決定を実行しました（サイド変更あり）"
+                            : "1P/2Pランダム決定を実行しました（結果は変更なし）"}
+                        </p>
+                      )}
+                      </>
                     )}
                     <div className="flex items-center gap-2">
                       <span className={`shrink-0 inline-flex items-center justify-center w-10 rounded border px-1 py-0.5 text-[10px] font-bold ${p1SideLabel === "-" ? "border-gray-300 bg-gray-100 text-gray-500" : p1SideLabel === "1P" ? "border-blue-200 bg-blue-100 text-blue-700" : "border-indigo-200 bg-indigo-100 text-indigo-700"}`}>
@@ -1157,35 +1306,6 @@ export function BracketPage() {
                       <span className="flex-1 min-w-0 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player1_id, incoming.slot1)}
                       </span>
-                      {isCharacterListMode ? (
-                        <select
-                          value={p1CharName}
-                          onChange={(e) => setP1CharName(e.target.value)}
-                          disabled={!selectedMatch.player1_id}
-                          className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
-                        >
-                          <option value="">キャラ未設定</option>
-                          {tournamentCharacterOptions.map((name) => (
-                            <option key={name} value={name}>{name}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <>
-                          <input
-                            value={p1CharName}
-                            onChange={(e) => setP1CharName(e.target.value)}
-                            disabled={!selectedMatch.player1_id}
-                            list="character-master-options-match-p1"
-                            className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
-                            placeholder="キャラ未設定"
-                          />
-                          <datalist id="character-master-options-match-p1">
-                            {characters.map((c) => (
-                              <option key={c.id} value={c.name} />
-                            ))}
-                          </datalist>
-                        </>
-                      )}
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setP1Wins(Math.max(0, p1Wins - 1))}
@@ -1198,6 +1318,22 @@ export function BracketPage() {
                         >＋</button>
                       </div>
                       <div className="ml-auto flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openParticipantDetail(selectedMatch.player1_id)}
+                          disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
+                          className="text-[10px] px-2 py-1 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-40"
+                        >
+                          詳細
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openParticipantEdit(selectedMatch.player1_id)}
+                          disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
+                          className="text-[10px] px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40"
+                        >
+                          編集
+                        </button>
                         <button
                           onClick={() => applyForcedLoss(1)}
                           disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
@@ -1218,35 +1354,6 @@ export function BracketPage() {
                       <span className="flex-1 min-w-0 text-sm font-medium text-gray-700 truncate">
                         {getPlayerName(selectedMatch.player2_id, incoming.slot2)}
                       </span>
-                      {isCharacterListMode ? (
-                        <select
-                          value={p2CharName}
-                          onChange={(e) => setP2CharName(e.target.value)}
-                          disabled={!selectedMatch.player2_id}
-                          className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
-                        >
-                          <option value="">キャラ未設定</option>
-                          {tournamentCharacterOptions.map((name) => (
-                            <option key={name} value={name}>{name}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <>
-                          <input
-                            value={p2CharName}
-                            onChange={(e) => setP2CharName(e.target.value)}
-                            disabled={!selectedMatch.player2_id}
-                            list="character-master-options-match-p2"
-                            className="min-w-[11rem] w-44 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:opacity-50"
-                            placeholder="キャラ未設定"
-                          />
-                          <datalist id="character-master-options-match-p2">
-                            {characters.map((c) => (
-                              <option key={c.id} value={c.name} />
-                            ))}
-                          </datalist>
-                        </>
-                      )}
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setP2Wins(Math.max(0, p2Wins - 1))}
@@ -1259,6 +1366,22 @@ export function BracketPage() {
                         >＋</button>
                       </div>
                       <div className="ml-auto flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openParticipantDetail(selectedMatch.player2_id)}
+                          disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
+                          className="text-[10px] px-2 py-1 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-40"
+                        >
+                          詳細
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openParticipantEdit(selectedMatch.player2_id)}
+                          disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
+                          className="text-[10px] px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40"
+                        >
+                          編集
+                        </button>
                         <button
                           onClick={() => applyForcedLoss(2)}
                           disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
@@ -1454,6 +1577,8 @@ export function BracketPage() {
           />
         </div>
       )}
+
+      {renderParticipantDetailDialog()}
     </div>
   );
 }
