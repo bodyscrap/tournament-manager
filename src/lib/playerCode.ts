@@ -22,8 +22,68 @@ export interface GeneratedAdminCode {
   adminCode: string;
 }
 
+const FULL_WIDTH_DIGIT_OFFSET = "0".charCodeAt(0) - "０".charCodeAt(0);
+
 function padNumber(value: number, length: number): string {
   return String(value).padStart(length, "0");
+}
+
+function normalizeAsciiDigits(value: string): string {
+  return value.replace(/[０-９]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) + FULL_WIDTH_DIGIT_OFFSET)
+  );
+}
+
+function findCodeCandidate(text: string): string {
+  const normalized = normalizeAsciiDigits(text).trim();
+  if (!normalized) return "";
+  if (/^\d+$/.test(normalized)) return normalized;
+
+  const joinedDigits = normalized.replace(/\D/g, "");
+  if (joinedDigits.length >= 18) return joinedDigits;
+
+  const digitRuns = normalized.match(/\d{18,}/g);
+  if (digitRuns && digitRuns.length > 0) {
+    return digitRuns.sort((a, b) => b.length - a.length)[0];
+  }
+
+  return "";
+}
+
+export function extractUserCode(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      const candidateKeys = ["playerCode", "adminCode", "userCode", "code", "qrPayload", "value"];
+      for (const key of candidateKeys) {
+        if (typeof record[key] === "string") {
+          const candidate = findCodeCandidate(record[key]);
+          if (candidate) return candidate;
+        }
+      }
+    }
+  } catch {
+    // fall back to raw text handling
+  }
+
+  return findCodeCandidate(trimmed);
+}
+
+export function isValidPlayerCode(value: string): boolean {
+  const code = extractUserCode(value);
+  if (!/^\d+$/.test(code)) return false;
+  if (code.length < 24) return false;
+  const suffixLength = code.length - 18;
+  return suffixLength >= 6 && (suffixLength - 4 >= 2 || suffixLength - 8 >= 2);
+}
+
+export function isValidAdminCode(value: string): boolean {
+  const code = extractUserCode(value);
+  return /^\d{18}$/.test(code);
 }
 
 function randomDigits(length: number): string {
@@ -103,12 +163,11 @@ function buildPlayerNameCode(playerName: string): string {
 }
 
 export function buildPlayerCode(
-  eventCode2: string,
+  _eventCode2: string,
   tournamentCode4: string,
   playerSequence: number,
   playerName: string
 ): GeneratedPlayerCode {
-  const normalizedEventCode = normalizeEventCode(eventCode2);
   const normalizedTournamentCode = normalizeTournamentCode(tournamentCode4);
   const playerId4 = padNumber(playerSequence, 4).slice(-4);
   const randomCode6 = randomDigits(6);
@@ -137,12 +196,11 @@ export function buildPlayerCode(
 }
 
 export function buildAdminCode(
-  eventCode2: string,
+  _eventCode2: string,
   tournamentCode4: string,
   maxParticipants: number,
   adminSequence: number
 ): GeneratedAdminCode {
-  const normalizedEventCode = normalizeEventCode(eventCode2);
   const normalizedTournamentCode = normalizeTournamentCode(tournamentCode4);
   const adminNumericId = maxParticipants + adminSequence;
   const adminId4 = padNumber(adminNumericId, 4).slice(-4);
