@@ -48,6 +48,22 @@ export interface CharacterListRow {
   created_at: string;
 }
 
+export interface TournamentCharacterCategory {
+  category_id: string;
+  category_name: string;
+  list_name: string | null;
+  list: string[];
+  min_select: number;
+  max_select: number;
+  forbid_duplicate_item?: boolean;
+}
+
+export interface TournamentCharacterSelectionConfig {
+  categories: TournamentCharacterCategory[];
+  total_min_select: number;
+  total_max_select: number;
+}
+
 // =====================
 // Tournament
 // =====================
@@ -59,6 +75,7 @@ export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
 export interface Tournament {
   id: string;
   name: string;
+  event_code: string;
   tournament_code: string;
   type: TournamentType;
   max_participants: number;
@@ -67,6 +84,7 @@ export interface Tournament {
   character_input_mode: CharacterInputMode;
   character_list_name: string | null;
   character_list: string[];
+  character_selection_config: TournamentCharacterSelectionConfig | null;
   default_player_side: TournamentDefaultPlayerSide;
   created_at: string;
 }
@@ -74,6 +92,7 @@ export interface Tournament {
 export interface TournamentRow {
   id: string;
   name: string;
+  event_code: string;
   tournament_code: string;
   type: TournamentType;
   max_participants: number;
@@ -82,6 +101,7 @@ export interface TournamentRow {
   character_input_mode: CharacterInputMode;
   character_list_name: string | null;
   character_list_json: string | null;
+  character_selection_config_json: string | null;
   default_player_side: TournamentDefaultPlayerSide;
   created_at: string;
 }
@@ -98,6 +118,7 @@ export interface TournamentPlayer {
   seed: number; // bracket position (1-indexed)
   name: string;
   character_name: string | null;
+  selected_characters: Record<string, string[]>; // category_id => selected character names
   attributes: Record<string, string>;
   dq: boolean;
 }
@@ -111,6 +132,7 @@ export interface TournamentPlayerRow {
   seed: number;
   name: string;
   character_name: string | null;
+  selected_characters_json: string | null; // raw JSON: category_id => string[]
   attributes: string; // raw JSON
   dq: number;
 }

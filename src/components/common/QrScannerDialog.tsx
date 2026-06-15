@@ -152,7 +152,7 @@ export function QrScannerDialog({ open, title, onClose, onDetected }: Props) {
         {error ? (
           <p className="text-xs text-red-600 mt-2">{error}</p>
         ) : (
-          <p className="text-xs text-gray-500 mt-2">QRコードをカメラにかざしてください。プレビュー映像から自動で読み取ります。</p>
+          <p className="text-xs text-gray-500 mt-2">2次元バーコードをカメラにかざしてください。プレビュー映像から自動で読み取ります。</p>
         )}
       </div>
     </div>

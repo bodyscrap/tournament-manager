@@ -65,7 +65,7 @@ async function toQrImage(payload: string, size: number): Promise<HTMLImageElemen
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("QR画像の読み込みに失敗しました"));
+    img.onerror = () => reject(new Error("2次元バーコード画像の読み込みに失敗しました"));
     img.src = url;
   });
 }

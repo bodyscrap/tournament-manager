@@ -30,18 +30,7 @@ export function TournamentPlayerCardsPage() {
         userCode: p.player_code,
         tournamentCode: tournament.tournament_code,
         tournamentName: tournament.name,
-        qrPayload: JSON.stringify({
-          entity_type: "participant",
-          tournament_id: tournament.id,
-          tournament_name: tournament.name,
-          tournament_code: tournament.tournament_code,
-          player_id: p.player_id,
-          player_id_4: p.player_id_4,
-          player_name: p.name,
-          player_code: p.player_code,
-          character_name: p.character_name,
-          attributes: p.attributes,
-        }),
+        qrPayload: p.player_code,
       }));
 
     const adminItems = [...admins]
@@ -53,17 +42,7 @@ export function TournamentPlayerCardsPage() {
         userCode: a.admin_code,
         tournamentCode: tournament.tournament_code,
         tournamentName: tournament.name,
-        qrPayload: JSON.stringify({
-          entity_type: "admin",
-          tournament_id: tournament.id,
-          tournament_name: tournament.name,
-          tournament_code: tournament.tournament_code,
-          admin_id: a.admin_id,
-          admin_id_4: a.admin_id_4,
-          admin_name: a.name,
-          admin_code: a.admin_code,
-          attributes: a.attributes,
-        }),
+        qrPayload: a.admin_code,
       }));
 
     return [...participantItems, ...adminItems];
@@ -122,18 +101,7 @@ export function TournamentPlayerCardsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {sorted.map((p) => {
-            const qrData = JSON.stringify({
-              entity_type: "participant",
-              tournament_id: tournament.id,
-              tournament_name: tournament.name,
-              tournament_code: tournament.tournament_code,
-              player_id: p.player_id,
-              player_id_4: p.player_id_4,
-              player_name: p.name,
-              player_code: p.player_code,
-              character_name: p.character_name,
-              attributes: p.attributes,
-            });
+            const qrData = p.player_code;
 
             return (
               <article key={p.player_id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
