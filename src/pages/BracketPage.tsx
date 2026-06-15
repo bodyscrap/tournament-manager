@@ -6,6 +6,7 @@ import { QrScannerDialog } from "../components/common/QrScannerDialog";
 import type { DragState } from "../components/bracket/BracketSection";
 import type { Match, TournamentPlayer, MatchBracket, MatchActionConfirmerType } from "../lib/types";
 import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../lib/matchState";
+import { extractUserCode } from "../lib/playerCode";
 
 type SearchUiState = "all" | "ready" | "undecided" | "in_progress" | "completed";
 
@@ -101,10 +102,10 @@ export function BracketPage() {
   };
 
   const findByCode = (code: string): ScannedCodeInfo | null => {
-    const normalized = code.trim();
+    const normalized = extractUserCode(code);
     if (!normalized) return null;
 
-    const participant = participants.find((p) => p.player_code === normalized);
+    const participant = participants.find((p) => extractUserCode(p.player_code) === normalized);
     if (participant) {
       return {
         code: normalized,
@@ -114,7 +115,7 @@ export function BracketPage() {
       };
     }
 
-    const admin = admins.find((a) => a.admin_code === normalized);
+    const admin = admins.find((a) => extractUserCode(a.admin_code) === normalized);
     if (admin) {
       return {
         code: normalized,
@@ -127,21 +128,17 @@ export function BracketPage() {
   };
 
   const resolveSearchPlayerIdByCode = (raw: string): string | null => {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    return participants.find((p) => p.player_code === trimmed)?.player_id ?? null;
+    const normalized = extractUserCode(raw);
+    if (!normalized) return null;
+    return participants.find((p) => extractUserCode(p.player_code) === normalized)?.player_id ?? null;
   };
 
   const resolveConfirmerByInput = (raw: string): ScannedCodeInfo | null => {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    return findByCode(trimmed);
+    return findByCode(raw);
   };
 
   const extractCodeFromQrPayload = (raw: string): string => {
-    const trimmed = raw.trim();
-    if (!trimmed) return "";
-    return trimmed;
+    return extractUserCode(raw);
   };
 
   const searchedMatches = tournamentMatches
