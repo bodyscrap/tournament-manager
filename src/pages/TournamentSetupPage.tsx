@@ -1,10 +1,84 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
-import type { CharacterInputMode, TournamentDefaultPlayerSide } from "../lib/types";
+import type {
+  CharacterInputMode,
+  TournamentCharacterSelectionConfig,
+  TournamentDefaultPlayerSide,
+} from "../lib/types";
 import { computePlayerRankings } from "../lib/ranking";
 import { buildDuplicateName, parseLinesToUniqueList } from "../lib/characterListUtils";
 import { normalizeTournamentCode } from "../lib/playerCode";
+
+type CharacterCategoryDraft = {
+  categoryName: string;
+  listName: string;
+  selectedListId: string;
+  listText: string;
+  minSelect: number;
+  maxSelect: number;
+  forbidDuplicateItem: boolean;
+};
+
+function createCategoryDraft(index: number): CharacterCategoryDraft {
+  return {
+    categoryName: `カテゴリ${index}`,
+    listName: "",
+    selectedListId: "",
+    listText: "",
+    minSelect: 1,
+    maxSelect: 1,
+    forbidDuplicateItem: false,
+  };
+}
+
+function ensureCategoryDraftCount(
+  drafts: CharacterCategoryDraft[],
+  count: number
+): CharacterCategoryDraft[] {
+  const next = [...drafts];
+  while (next.length < count) {
+    next.push(createCategoryDraft(next.length + 1));
+  }
+  return next.slice(0, count);
+}
+
+function buildSelectionConfigFromDrafts(
+  drafts: CharacterCategoryDraft[],
+  totalMinInput: number,
+  totalMaxInput: number
+): { config: TournamentCharacterSelectionConfig; flattened: string[] } {
+  const categories = drafts.map((draft, i) => {
+    const list = parseLinesToUniqueList(draft.listText);
+    const maxUpper = Math.max(1, list.length || 1);
+    const maxSelect = Math.min(maxUpper, Math.max(1, Math.floor(draft.maxSelect || 1)));
+    const minSelect = Math.min(maxSelect, Math.max(0, Math.floor(draft.minSelect || 0)));
+    return {
+      category_id: `category_${i + 1}`,
+      category_name: draft.categoryName.trim() || `カテゴリ${i + 1}`,
+      list_name: draft.listName.trim() || null,
+      list,
+      min_select: minSelect,
+      max_select: maxSelect,
+      forbid_duplicate_item: draft.forbidDuplicateItem,
+    };
+  });
+
+  const sumMin = categories.reduce((sum, c) => sum + c.min_select, 0);
+  const sumMax = categories.reduce((sum, c) => sum + c.max_select, 0);
+  const totalMax = Math.min(sumMax, Math.max(1, Math.floor(totalMaxInput || sumMax || 1)));
+  const totalMin = Math.min(totalMax, Math.max(0, Math.floor(totalMinInput || sumMin || 0)));
+  const flattened = [...new Set(categories.flatMap((c) => c.list))];
+
+  return {
+    config: {
+      categories,
+      total_min_select: totalMin,
+      total_max_select: totalMax,
+    },
+    flattened,
+  };
+}
 
 function getDefaultPlayerSideLabel(value: TournamentDefaultPlayerSide): string {
   switch (value) {
@@ -32,6 +106,7 @@ export function TournamentSetupPage() {
     addParticipant,
     editParticipantName,
     setParticipantCharacter,
+    setParticipantSelectedCharacters,
     removeParticipant,
     swapSeeds,
     randomizeSeeds,
@@ -41,6 +116,7 @@ export function TournamentSetupPage() {
   } = useAppContext();
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
@@ -50,9 +126,12 @@ export function TournamentSetupPage() {
   const [gfReset, setGfReset] = useState(true);
   const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
-  const [createCharacterListName, setCreateCharacterListName] = useState("");
-  const [createSelectedCharacterListId, setCreateSelectedCharacterListId] = useState("");
-  const [createCharacterListText, setCreateCharacterListText] = useState("");
+  const [createCategoryCount, setCreateCategoryCount] = useState(1);
+  const [createCategoryDrafts, setCreateCategoryDrafts] = useState<CharacterCategoryDraft[]>([
+    createCategoryDraft(1),
+  ]);
+  const [createTotalMinSelect, setCreateTotalMinSelect] = useState(1);
+  const [createTotalMaxSelect, setCreateTotalMaxSelect] = useState(1);
   const [creating, setCreating] = useState(false);
   const [creatingUsedCharacterList, setCreatingUsedCharacterList] = useState(false);
 
@@ -64,14 +143,18 @@ export function TournamentSetupPage() {
   const [editGfReset, setEditGfReset] = useState(true);
   const [editDefaultPlayerSide, setEditDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
-  const [editCharacterListName, setEditCharacterListName] = useState("");
-  const [editSelectedCharacterListId, setEditSelectedCharacterListId] = useState("");
-  const [editCharacterListText, setEditCharacterListText] = useState("");
+  const [editCategoryCount, setEditCategoryCount] = useState(1);
+  const [editCategoryDrafts, setEditCategoryDrafts] = useState<CharacterCategoryDraft[]>([
+    createCategoryDraft(1),
+  ]);
+  const [editTotalMinSelect, setEditTotalMinSelect] = useState(1);
+  const [editTotalMaxSelect, setEditTotalMaxSelect] = useState(1);
   const [savingSettings, setSavingSettings] = useState(false);
 
   // --- 参加者追加フォーム ---
   const [addName, setAddName] = useState("");
   const [addCharacter, setAddCharacter] = useState("");
+  const [addSelectedCharacters, setAddSelectedCharacters] = useState<Record<string, string[]>>({});
   const [adding, setAdding] = useState(false);
   const [participantCharacterDrafts, setParticipantCharacterDrafts] = useState<Record<string, string>>({});
 
@@ -79,6 +162,10 @@ export function TournamentSetupPage() {
   const [swapFrom, setSwapFrom] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [editingParticipantId, setEditingParticipantId] = useState<string | null>(null);
+  const [detailParticipantId, setDetailParticipantId] = useState<string | null>(null);
+  const [seedRandomizeNotice, setSeedRandomizeNotice] = useState<"changed" | "unchanged" | null>(null);
+  const [seedRandomizeNoticeVisible, setSeedRandomizeNoticeVisible] = useState(false);
 
   const participantIds = new Set(participants.map((p) => p.player_id));
   const sortedParticipants = [...participants].sort((a, b) => a.seed - b.seed);
@@ -86,6 +173,17 @@ export function TournamentSetupPage() {
     () => computePlayerRankings(participants, matches),
     [participants, matches]
   );
+
+  useEffect(() => {
+    if (!seedRandomizeNotice) return;
+    setSeedRandomizeNoticeVisible(true);
+    const fadeTimer = window.setTimeout(() => setSeedRandomizeNoticeVisible(false), 1200);
+    const clearTimer = window.setTimeout(() => setSeedRandomizeNotice(null), 1800);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [seedRandomizeNotice]);
 
   const generateRandomTournamentCode = () => {
     const value = Math.floor(Math.random() * 10000);
@@ -109,16 +207,89 @@ export function TournamentSetupPage() {
     return [...unique].sort((a, b) => a.localeCompare(b, "ja"));
   };
 
+  const toSlotValues = (selected: string[] | undefined, maxSelect: number): string[] => {
+    const slots = Array.from({ length: Math.max(1, maxSelect) }, () => "");
+    const src = selected ?? [];
+    for (let i = 0; i < Math.min(slots.length, src.length); i++) {
+      slots[i] = src[i] ?? "";
+    }
+    return slots;
+  };
+
+  const fromSlotValues = (slots: string[]): string[] =>
+    slots.map((v) => v.trim()).filter((v) => v.length > 0);
+
+  const countSelections = (selected: Record<string, string[]>): number =>
+    Object.values(selected).reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
+
+  const validateSelectionByConfig = (
+    selected: Record<string, string[]>,
+    config: TournamentCharacterSelectionConfig
+  ): string | null => {
+    const totalCount = countSelections(selected);
+    if (totalCount < config.total_min_select || totalCount > config.total_max_select) {
+      return `合計${config.total_min_select}～${config.total_max_select}個選択してください（現在: ${totalCount}個）`;
+    }
+    for (const cat of config.categories) {
+      const items = selected[cat.category_id] ?? [];
+      const count = items.length;
+      if (count < cat.min_select || count > cat.max_select) {
+        return `${cat.category_name}: ${cat.min_select}～${cat.max_select}個選択してください（現在: ${count}個）`;
+      }
+      if (cat.forbid_duplicate_item) {
+        const uniqueCount = new Set(items).size;
+        if (uniqueCount !== items.length) {
+          return `${cat.category_name}: 同一項目禁止が有効なため、同じ項目を重複選択できません`;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resetParticipantForm = () => {
+    setAddName("");
+    setAddCharacter("");
+    setAddSelectedCharacters({});
+    setEditingParticipantId(null);
+  };
+
+  const startParticipantEdit = (playerId: string) => {
+    const target = participants.find((p) => p.player_id === playerId);
+    if (!target) return;
+    setEditingParticipantId(playerId);
+    setAddName(target.name ?? "");
+    setAddCharacter(target.character_name ?? "");
+    setAddSelectedCharacters(target.selected_characters ?? {});
+  };
+
+  useEffect(() => {
+    if (!tournament) return;
+    const params = new URLSearchParams(location.search);
+    const participantId = params.get("editParticipantId");
+    if (!participantId) return;
+    const target = participants.find((p) => p.player_id === participantId);
+    if (!target) return;
+    startParticipantEdit(participantId);
+    navigate("/tournament/setup", { replace: true });
+  }, [location.search, navigate, participants, tournament]);
+
   // ===== ハンドラ =====
   const handleCreate = async () => {
     const tournamentName =
       name.trim() ||
       `大会 ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "short", day: "numeric" })}`;
     const tournamentCode = normalizeTournamentCode(createTournamentCode);
-    const characterList = parseLinesToUniqueList(createCharacterListText);
+    const createDrafts = ensureCategoryDraftCount(createCategoryDrafts, createCategoryCount);
+    const { config, flattened } = buildSelectionConfigFromDrafts(
+      createDrafts,
+      createTotalMinSelect,
+      createTotalMaxSelect
+    );
+    const characterList = createCharacterMode === "list_selection" ? flattened : [];
     const characterListName = createCharacterMode === "list_selection"
-      ? (createCharacterListName.trim() || "カスタムリスト")
+      ? (config.categories[0]?.list_name || "カスタムリスト")
       : null;
+    const selectionConfig = createCharacterMode === "list_selection" ? config : null;
     setCreating(true);
     try {
       await createNew(
@@ -130,6 +301,7 @@ export function TournamentSetupPage() {
         createCharacterMode,
         characterListName,
         characterList,
+        selectionConfig,
         createDefaultPlayerSide
       );
     } finally {
@@ -145,18 +317,52 @@ export function TournamentSetupPage() {
     setEditGfReset(tournament.grand_final_reset);
     setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
     setEditCharacterMode(tournament.character_input_mode);
-    setEditCharacterListName(tournament.character_list_name ?? "");
-    setEditSelectedCharacterListId("");
-    setEditCharacterListText(tournament.character_list.join("\n"));
+    const config = tournament.character_selection_config;
+    const categories = config?.categories?.length
+      ? config.categories.slice(0, 3)
+      : [
+          {
+            category_name: "カテゴリ1",
+            list_name: tournament.character_list_name,
+            list: tournament.character_list,
+            min_select: 1,
+            max_select: 1,
+            forbid_duplicate_item: false,
+          },
+        ];
+    setEditCategoryCount(Math.min(3, Math.max(1, categories.length)));
+    setEditCategoryDrafts(
+      ensureCategoryDraftCount(
+        categories.map((cat, i) => ({
+          categoryName: cat.category_name?.trim() || `カテゴリ${i + 1}`,
+          listName: cat.list_name ?? "",
+          selectedListId: "",
+          listText: (cat.list ?? []).join("\n"),
+          minSelect: cat.min_select ?? 1,
+          maxSelect: cat.max_select ?? 1,
+          forbidDuplicateItem: !!cat.forbid_duplicate_item,
+        })),
+        Math.min(3, Math.max(1, categories.length))
+      )
+    );
+    setEditTotalMinSelect(config?.total_min_select ?? 1);
+    setEditTotalMaxSelect(config?.total_max_select ?? Math.max(1, tournament.character_list.length));
     setEditSettings(true);
   };
 
   const handleSaveSettings = async () => {
-    const characterList = parseLinesToUniqueList(editCharacterListText);
+    const editDrafts = ensureCategoryDraftCount(editCategoryDrafts, editCategoryCount);
+    const { config, flattened } = buildSelectionConfigFromDrafts(
+      editDrafts,
+      editTotalMinSelect,
+      editTotalMaxSelect
+    );
+    const characterList = editCharacterMode === "list_selection" ? flattened : [];
     const tournamentCode = normalizeTournamentCode(editTournamentCode);
     const characterListName = editCharacterMode === "list_selection"
-      ? (editCharacterListName.trim() || "カスタムリスト")
+      ? (config.categories[0]?.list_name || "カスタムリスト")
       : null;
+    const selectionConfig = editCharacterMode === "list_selection" ? config : null;
     setSavingSettings(true);
     try {
       await updateTournamentSettings(
@@ -167,6 +373,7 @@ export function TournamentSetupPage() {
         editCharacterMode,
         characterListName,
         characterList,
+        selectionConfig,
         editDefaultPlayerSide
       );
       setEditSettings(false);
@@ -178,19 +385,67 @@ export function TournamentSetupPage() {
   const handleAddParticipant = async () => {
     if (!tournament) return;
     if (!addName.trim()) return;
-    if (tournament.character_input_mode === "list_selection" && !addCharacter.trim()) {
+    const editingTarget = editingParticipantId
+      ? participants.find((p) => p.player_id === editingParticipantId) ?? null
+      : null;
+
+    // For list_selection with category config: validate per-category and total selections
+    if (tournament.character_input_mode === "list_selection" && tournament.character_selection_config) {
+      const config = tournament.character_selection_config;
+      const validationError = validateSelectionByConfig(addSelectedCharacters, config);
+      if (validationError) {
+        alert(validationError);
+        return;
+      }
+
+      setAdding(true);
+      try {
+        // Character name is set to first selected if any, for match setup fallback
+        const firstChar = Object.values(addSelectedCharacters).flat()[0] ?? null;
+        if (editingTarget) {
+          if (editingTarget.name !== addName.trim()) {
+            await editParticipantName(editingTarget.player_id, addName.trim());
+          }
+          if ((editingTarget.character_name ?? null) !== firstChar) {
+            await setParticipantCharacter(editingTarget.player_id, firstChar);
+          }
+          await setParticipantSelectedCharacters(editingTarget.player_id, addSelectedCharacters);
+        } else {
+          await addParticipant(addName.trim(), firstChar, {}, addSelectedCharacters);
+        }
+        resetParticipantForm();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "参加者の追加に失敗しました");
+      } finally {
+        setAdding(false);
+      }
+    } else if (tournament.character_input_mode === "list_selection" && !addCharacter.trim()) {
+      // Legacy single-select mode
       alert("この大会では使用キャラの設定が必須です");
-      return;
-    }
-    setAdding(true);
-    try {
-      await addParticipant(addName.trim(), addCharacter.trim() || null, {});
-      setAddName("");
-      setAddCharacter("");
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "参加者の追加に失敗しました");
-    } finally {
-      setAdding(false);
+    } else {
+      // Free input mode
+      setAdding(true);
+      try {
+        const nextCharacter = addCharacter.trim() || null;
+        if (editingTarget) {
+          if (editingTarget.name !== addName.trim()) {
+            await editParticipantName(editingTarget.player_id, addName.trim());
+          }
+          if ((editingTarget.character_name ?? null) !== nextCharacter) {
+            await setParticipantCharacter(editingTarget.player_id, nextCharacter);
+          }
+          if (Object.keys(editingTarget.selected_characters ?? {}).length > 0) {
+            await setParticipantSelectedCharacters(editingTarget.player_id, {});
+          }
+        } else {
+          await addParticipant(addName.trim(), nextCharacter, {});
+        }
+        resetParticipantForm();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "参加者の追加に失敗しました");
+      } finally {
+        setAdding(false);
+      }
     }
   };
 
@@ -206,7 +461,7 @@ export function TournamentSetupPage() {
     }
     const character = isListMode ? (charInList ? p.character_name : null) : p.character_name;
     try {
-      await addParticipant(p.name, character, p.attributes, p.id);
+      await addParticipant(p.name, character, p.attributes, {}, p.id);
     } catch (err) {
       alert(err instanceof Error ? err.message : "名簿からの参加者追加に失敗しました");
     }
@@ -234,6 +489,12 @@ export function TournamentSetupPage() {
     if (!confirm("結果を確定します。確定後はこの大会を編集できなくなります。よろしいですか？")) return;
     setFinalizing(true);
     try { await finalizeTournament(); } finally { setFinalizing(false); }
+  };
+
+  const handleRandomizeSeeds = async () => {
+    const changed = await randomizeSeeds();
+    setSeedRandomizeNotice(changed ? "changed" : "unchanged");
+    setSwapFrom(null);
   };
 
   const handleCreateUsedCharacterList = async () => {
@@ -351,45 +612,162 @@ export function TournamentSetupPage() {
           {createCharacterMode === "list_selection" && (
             <div>
               <div className="mb-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラリストを選択</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ数 (1〜3)</label>
                 <select
-                  value={createSelectedCharacterListId}
+                  value={createCategoryCount}
                   onChange={(e) => {
-                    const id = e.target.value;
-                    setCreateSelectedCharacterListId(id);
-                    const selected = characterLists.find((list) => list.id === id);
-                    if (!selected) return;
-                    setCreateCharacterListName(selected.name);
-                    setCreateCharacterListText(selected.characters.join("\n"));
+                    const count = Math.min(3, Math.max(1, Number(e.target.value) || 1));
+                    setCreateCategoryCount(count);
+                    setCreateCategoryDrafts((prev) => ensureCategoryDraftCount(prev, count));
                   }}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">-- 手入力 / カスタム --</option>
-                  {characterLists.map((list) => (
-                    <option key={list.id} value={list.id}>{list.name}</option>
-                  ))}
+                  <option value={1}>1カテゴリ</option>
+                  <option value={2}>2カテゴリ</option>
+                  <option value={3}>3カテゴリ</option>
                 </select>
               </div>
-              <div className="mb-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">大会に保存するリスト名</label>
+
+              <div className="space-y-3 mb-3">
+                {ensureCategoryDraftCount(createCategoryDrafts, createCategoryCount)
+                  .slice(0, createCategoryCount)
+                  .map((draft, idx) => (
+                    <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                      <p className="text-xs font-semibold text-gray-500 mb-2">カテゴリ {idx + 1}</p>
+                      <input
+                        value={draft.categoryName}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCreateCategoryDrafts((prev) => {
+                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                            next[idx] = { ...next[idx], categoryName: value };
+                            return next;
+                          });
+                        }}
+                        placeholder="カテゴリ名"
+                        className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                      <select
+                        value={draft.selectedListId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setCreateCategoryDrafts((prev) => {
+                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                            const selected = characterLists.find((list) => list.id === id);
+                            next[idx] = {
+                              ...next[idx],
+                              selectedListId: id,
+                              listName: selected?.name ?? next[idx].listName,
+                              listText: selected ? selected.characters.join("\n") : next[idx].listText,
+                            };
+                            return next;
+                          });
+                        }}
+                        className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="">-- 手入力 / カスタム --</option>
+                        {characterLists.map((list) => (
+                          <option key={list.id} value={list.id}>{list.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        value={draft.listName}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCreateCategoryDrafts((prev) => {
+                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                            next[idx] = { ...next[idx], listName: value };
+                            return next;
+                          });
+                        }}
+                        placeholder="カテゴリに割り当てるリスト名"
+                        className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                      <textarea
+                        value={draft.listText}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCreateCategoryDrafts((prev) => {
+                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                            next[idx] = { ...next[idx], listText: value };
+                            return next;
+                          });
+                        }}
+                        rows={4}
+                        placeholder="1行に1キャラクター名"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={draft.minSelect}
+                          onChange={(e) => {
+                            const value = Number(e.target.value) || 0;
+                            setCreateCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                              next[idx] = { ...next[idx], minSelect: value };
+                              return next;
+                            });
+                          }}
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                          placeholder="カテゴリ最小選択数"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={draft.maxSelect}
+                          onChange={(e) => {
+                            const value = Number(e.target.value) || 1;
+                            setCreateCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                              next[idx] = { ...next[idx], maxSelect: value };
+                              return next;
+                            });
+                          }}
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                          placeholder="カテゴリ最大選択数"
+                        />
+                      </div>
+                      <label className="mt-2 flex items-center gap-2 text-xs text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={draft.forbidDuplicateItem}
+                          onChange={(e) => {
+                            const value = e.target.checked;
+                            setCreateCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                              next[idx] = { ...next[idx], forbidDuplicateItem: value };
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 text-blue-600"
+                        />
+                        同一項目禁止
+                      </label>
+                    </div>
+                  ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
                 <input
-                  value={createCharacterListName}
-                  onChange={(e) => setCreateCharacterListName(e.target.value)}
-                  placeholder="例: S4 公式リスト"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  type="number"
+                  min={0}
+                  value={createTotalMinSelect}
+                  onChange={(e) => setCreateTotalMinSelect(Number(e.target.value) || 0)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  placeholder="全カテゴリ合計 最小選択数"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  value={createTotalMaxSelect}
+                  onChange={(e) => setCreateTotalMaxSelect(Number(e.target.value) || 1)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  placeholder="全カテゴリ合計 最大選択数"
                 />
               </div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
-              </div>
-              <textarea
-                value={createCharacterListText}
-                onChange={(e) => setCreateCharacterListText(e.target.value)}
-                rows={5}
-                placeholder="1行に1キャラクター名を入力"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">大会開始時に、この内容のコピーとリスト名を大会データとして保存します。</p>
+              <p className="text-xs text-gray-500 mt-1">自由入力モード時は単一カテゴリ・単一項目選択(1固定)として扱います。</p>
             </div>
           )}
           <button
@@ -414,6 +792,9 @@ export function TournamentSetupPage() {
   const rosterNotAdded = players.filter((p) => !participantIds.has(p.id));
   const isCharacterListMode = tournament.character_input_mode === "list_selection";
   const tournamentCharacterOptions = tournament.character_list;
+  const selectionCategoryCount = tournament.character_selection_config?.categories.length ?? 1;
+  const selectionTotalMin = tournament.character_selection_config?.total_min_select ?? 1;
+  const selectionTotalMax = tournament.character_selection_config?.total_max_select ?? 1;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -437,7 +818,7 @@ export function TournamentSetupPage() {
             / 上限 {tournament.max_participants} 名 /{" "}
             {tournament.character_input_mode === "list_selection" ? "キャラ: リスト選択" : "キャラ: 自由入力"} /{" "}
             {tournament.character_input_mode === "list_selection"
-              ? `リスト: ${tournament.character_list_name ?? "未設定"}`
+              ? `カテゴリ: ${selectionCategoryCount} / 合計選択: ${selectionTotalMin}-${selectionTotalMax} / 代表リスト: ${tournament.character_list_name ?? "未設定"}`
               : "リスト: なし"} /{" "}
             <span className={`font-medium ${
               tournament.status === "setup" ? "text-yellow-600"
@@ -576,45 +957,162 @@ export function TournamentSetupPage() {
             {editCharacterMode === "list_selection" && (
               <div>
                 <div className="mb-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラリストを選択</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ数 (1〜3)</label>
                   <select
-                    value={editSelectedCharacterListId}
+                    value={editCategoryCount}
                     onChange={(e) => {
-                      const id = e.target.value;
-                      setEditSelectedCharacterListId(id);
-                      const selected = characterLists.find((list) => list.id === id);
-                      if (!selected) return;
-                      setEditCharacterListName(selected.name);
-                      setEditCharacterListText(selected.characters.join("\n"));
+                      const count = Math.min(3, Math.max(1, Number(e.target.value) || 1));
+                      setEditCategoryCount(count);
+                      setEditCategoryDrafts((prev) => ensureCategoryDraftCount(prev, count));
                     }}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">-- 手入力 / カスタム --</option>
-                    {characterLists.map((list) => (
-                      <option key={list.id} value={list.id}>{list.name}</option>
-                    ))}
+                    <option value={1}>1カテゴリ</option>
+                    <option value={2}>2カテゴリ</option>
+                    <option value={3}>3カテゴリ</option>
                   </select>
                 </div>
-                <div className="mb-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">大会に保存するリスト名</label>
+
+                <div className="space-y-3 mb-3">
+                  {ensureCategoryDraftCount(editCategoryDrafts, editCategoryCount)
+                    .slice(0, editCategoryCount)
+                    .map((draft, idx) => (
+                      <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        <p className="text-xs font-semibold text-gray-500 mb-2">カテゴリ {idx + 1}</p>
+                        <input
+                          value={draft.categoryName}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                              next[idx] = { ...next[idx], categoryName: value };
+                              return next;
+                            });
+                          }}
+                          placeholder="カテゴリ名"
+                          className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <select
+                          value={draft.selectedListId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setEditCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                              const selected = characterLists.find((list) => list.id === id);
+                              next[idx] = {
+                                ...next[idx],
+                                selectedListId: id,
+                                listName: selected?.name ?? next[idx].listName,
+                                listText: selected ? selected.characters.join("\n") : next[idx].listText,
+                              };
+                              return next;
+                            });
+                          }}
+                          className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                          <option value="">-- 手入力 / カスタム --</option>
+                          {characterLists.map((list) => (
+                            <option key={list.id} value={list.id}>{list.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={draft.listName}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                              next[idx] = { ...next[idx], listName: value };
+                              return next;
+                            });
+                          }}
+                          placeholder="カテゴリに割り当てるリスト名"
+                          className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <textarea
+                          value={draft.listText}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                              next[idx] = { ...next[idx], listText: value };
+                              return next;
+                            });
+                          }}
+                          rows={4}
+                          placeholder="1行に1キャラクター名"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <input
+                            type="number"
+                            min={0}
+                            value={draft.minSelect}
+                            onChange={(e) => {
+                              const value = Number(e.target.value) || 0;
+                              setEditCategoryDrafts((prev) => {
+                                const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                                next[idx] = { ...next[idx], minSelect: value };
+                                return next;
+                              });
+                            }}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="カテゴリ最小選択数"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            value={draft.maxSelect}
+                            onChange={(e) => {
+                              const value = Number(e.target.value) || 1;
+                              setEditCategoryDrafts((prev) => {
+                                const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                                next[idx] = { ...next[idx], maxSelect: value };
+                                return next;
+                              });
+                            }}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="カテゴリ最大選択数"
+                          />
+                        </div>
+                        <label className="mt-2 flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={draft.forbidDuplicateItem}
+                            onChange={(e) => {
+                              const value = e.target.checked;
+                              setEditCategoryDrafts((prev) => {
+                                const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                                next[idx] = { ...next[idx], forbidDuplicateItem: value };
+                                return next;
+                              });
+                            }}
+                            className="w-4 h-4 text-blue-600"
+                          />
+                          同一項目禁止
+                        </label>
+                      </div>
+                    ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
                   <input
-                    value={editCharacterListName}
-                    onChange={(e) => setEditCharacterListName(e.target.value)}
-                    placeholder="例: S4 公式リスト"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    type="number"
+                    min={0}
+                    value={editTotalMinSelect}
+                    onChange={(e) => setEditTotalMinSelect(Number(e.target.value) || 0)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="全カテゴリ合計 最小選択数"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={editTotalMaxSelect}
+                    onChange={(e) => setEditTotalMaxSelect(Number(e.target.value) || 1)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="全カテゴリ合計 最大選択数"
                   />
                 </div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-sm font-medium text-gray-700">使用可能キャラリスト</label>
-                </div>
-                <textarea
-                  value={editCharacterListText}
-                  onChange={(e) => setEditCharacterListText(e.target.value)}
-                  rows={5}
-                  placeholder="1行に1キャラクター名を入力"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="text-xs text-gray-500 mt-1">大会で固定保存されるキャラ一覧です。元のリストを後で変更してもこの大会には影響しません。</p>
+                <p className="text-xs text-gray-500 mt-1">大会で固定保存されるカテゴリ別キャラ設定です。元のマスターリスト変更は大会に影響しません。</p>
               </div>
             )}
             <div className="flex gap-2 pt-1">
@@ -640,11 +1138,23 @@ export function TournamentSetupPage() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-gray-700">参加者 ({participants.length} 名)</h3>
             {!isReadOnly && (
-              <button onClick={randomizeSeeds} className="text-xs px-2 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-700 rounded">
+              <button onClick={handleRandomizeSeeds} className="text-xs px-2 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-700 rounded">
                 🔀 ランダム抽選
               </button>
             )}
           </div>
+
+          {!isReadOnly && seedRandomizeNotice && (
+            <p
+              className={`text-[11px] mb-2 transition-opacity duration-700 ${
+                seedRandomizeNoticeVisible ? "opacity-100" : "opacity-0"
+              } ${seedRandomizeNotice === "changed" ? "text-emerald-700" : "text-amber-700"}`}
+            >
+              {seedRandomizeNotice === "changed"
+                ? "ランダム抽選を実行しました（並び順変更あり）"
+                : "ランダム抽選を実行しました（結果は変更なし）"}
+            </p>
+          )}
 
           {swapFrom && (
             <p className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded mb-2">
@@ -669,7 +1179,10 @@ export function TournamentSetupPage() {
                 >
                   <span className="w-6 text-center text-xs font-mono text-gray-400">{tp.seed}</span>
                   <span className="flex-1 font-medium text-gray-800">{tp.name}</span>
-                  {isCharacterListMode ? (
+                  {isCharacterListMode && tournament.character_selection_config ? (
+                    <span className="text-xs text-gray-400">キャラ設定あり</span>
+                  ) : isCharacterListMode ? (
+                    // 単一キャラ選択（従来の select）
                     <select
                       value={participantCharacterDrafts[tp.player_id] ?? (tp.character_name ?? "")}
                       disabled={isReadOnly}
@@ -742,23 +1255,27 @@ export function TournamentSetupPage() {
                       </datalist>
                     </>
                   )}
+                  {isCharacterListMode && tournament.character_selection_config && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDetailParticipantId(tp.player_id);
+                      }}
+                      className="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                    >
+                      詳細
+                    </button>
+                  )}
                   {!isReadOnly && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          const nextName = prompt("参加者名を入力してください", tp.name);
-                          if (nextName === null) return;
-                          const trimmed = nextName.trim();
-                          if (!trimmed) {
-                            alert("参加者名を入力してください");
-                            return;
-                          }
-                          await editParticipantName(tp.player_id, trimmed);
+                          startParticipantEdit(tp.player_id);
                         }}
                         className="text-xs px-2 py-0.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200"
                       >
-                        名前編集
+                        編集
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); removeParticipant(tp.player_id); }}
@@ -791,7 +1308,11 @@ export function TournamentSetupPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-4">
             {/* Direct entry form */}
             <div>
-              <h3 className="font-semibold text-gray-700 mb-3">参加者を追加</h3>
+              <h3 className="font-semibold text-gray-700 mb-3">
+                {editingParticipantId
+                  ? `参加者No. ${participants.find((p) => p.player_id === editingParticipantId)?.seed ?? "-"} の変更`
+                  : "参加者を追加"}
+              </h3>
               {tournament.status === "in_progress" && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
                   大会進行中です。追加した参加者の試合はブラケット画面から追加してください。
@@ -806,7 +1327,66 @@ export function TournamentSetupPage() {
                   placeholder="名前 *"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                {isCharacterListMode ? (
+                {isCharacterListMode && tournament.character_selection_config ? (
+                  /* カテゴリ別複選択 UI */
+                  <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 space-y-3">
+                    <p className="text-xs text-gray-600">
+                      各カテゴリは枠ごとに選択してください（同じ項目の重複選択可）。
+                    </p>
+                    <p className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1">
+                      トータル現在の選択: {countSelections(addSelectedCharacters)} / {tournament.character_selection_config.total_max_select} (最小 {tournament.character_selection_config.total_min_select})
+                    </p>
+                    {tournament.character_selection_config.categories.map((cat) => {
+                      const slotValues = toSlotValues(addSelectedCharacters[cat.category_id], cat.max_select);
+                      const selectedCount = fromSlotValues(slotValues).length;
+
+                      return (
+                        <div key={cat.category_id} className="border-b border-gray-200 pb-2">
+                          <p className="text-xs font-semibold text-gray-600 mb-2">
+                            {cat.category_name}
+                            {cat.min_select > 0 && <span className="text-red-500"> *</span>}
+                            <span className="text-gray-400 ml-1">
+                              (現在の選択: {selectedCount} / {cat.max_select})
+                            </span>
+                          </p>
+
+                          <div className="grid grid-cols-1 gap-1">
+                            {slotValues.map((slotValue, slotIndex) => (
+                              <select
+                                key={`${cat.category_id}-slot-${slotIndex}`}
+                                value={slotValue}
+                                onChange={(e) => {
+                                  const nextSlots = [...slotValues];
+                                  if (
+                                    cat.forbid_duplicate_item &&
+                                    e.target.value &&
+                                    nextSlots.some((v, i) => i !== slotIndex && v === e.target.value)
+                                  ) {
+                                    alert(`${cat.category_name}は同一項目禁止のため重複選択できません`);
+                                    return;
+                                  }
+                                  nextSlots[slotIndex] = e.target.value;
+                                  setAddSelectedCharacters((prev) => ({
+                                    ...prev,
+                                    [cat.category_id]: fromSlotValues(nextSlots),
+                                  }));
+                                }}
+                                className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">未選択</option>
+                                {cat.list.map((itemName) => (
+                                  <option key={`${cat.category_id}-${slotIndex}-${itemName}`} value={itemName}>
+                                    {itemName}
+                                  </option>
+                                ))}
+                              </select>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : isCharacterListMode ? (
                   <select
                     value={addCharacter}
                     onChange={(e) => setAddCharacter(e.target.value)}
@@ -839,12 +1419,19 @@ export function TournamentSetupPage() {
                   disabled={
                     adding ||
                     !addName.trim() ||
-                    participants.length >= tournament.max_participants ||
-                    (isCharacterListMode && !addCharacter.trim())
+                    (!editingParticipantId && participants.length >= tournament.max_participants) ||
+                    (isCharacterListMode && !tournament.character_selection_config && !addCharacter.trim())
                   }
                   className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
                 >
-                  {adding ? "追加中..." : "＋ 追加"}
+                  {adding ? (editingParticipantId ? "変更中..." : "追加中...") : (editingParticipantId ? "決定" : "＋ 追加")}
+                </button>
+                <button
+                  onClick={resetParticipantForm}
+                  disabled={adding}
+                  className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-50"
+                >
+                  キャンセル
                 </button>
                 <p className="text-xs text-gray-400 text-center">
                   {participants.length} / {tournament.max_participants} 名
@@ -923,6 +1510,67 @@ export function TournamentSetupPage() {
           </div>
         </div>
       )}
+
+      {detailParticipantId && tournament?.character_selection_config && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">キャラ選択詳細</h2>
+            {(() => {
+              const target = participants.find((p) => p.player_id === detailParticipantId);
+              if (!target) {
+                return <p className="text-sm text-gray-500">参加者情報が見つかりません。</p>;
+              }
+              const totalSelected = tournament.character_selection_config.categories.reduce(
+                (sum, cat) => sum + (target.selected_characters?.[cat.category_id]?.length ?? 0),
+                0
+              );
+              return (
+                <>
+                  <p className="text-sm text-gray-600 mb-2">
+                    参加者No. {target.seed} / {target.name}
+                  </p>
+                  <p className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1 mb-3">
+                    トータル現在の選択: {totalSelected} / {tournament.character_selection_config.total_max_select} (最小 {tournament.character_selection_config.total_min_select})
+                  </p>
+                  <div className="space-y-3">
+                    {tournament.character_selection_config.categories.map((cat) => {
+                      const selected = target.selected_characters?.[cat.category_id] ?? [];
+                      return (
+                        <div key={cat.category_id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                          <p className="text-sm font-semibold text-gray-700 mb-1">{cat.category_name}</p>
+                          <p className="text-xs text-gray-500 mb-2">
+                            選択数: {selected.length} / {cat.max_select} (最小 {cat.min_select})
+                          </p>
+                          {selected.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {selected.map((name, i) => (
+                                <span key={`${cat.category_id}-${i}-${name}`} className="text-xs bg-blue-100 text-blue-700 rounded px-2 py-1">
+                                  {name}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-400">未選択</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+            <div className="flex justify-end mt-5">
+              <button
+                onClick={() => setDetailParticipantId(null)}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg text-sm"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

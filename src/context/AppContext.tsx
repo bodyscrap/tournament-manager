@@ -85,10 +85,12 @@ import type {
   TournamentType,
   TournamentStatus,
   TournamentDefaultPlayerSide,
+  TournamentCharacterSelectionConfig,
   RoundLock,
   MatchPlayerSide,
   MatchActionConfirmerType,
 } from "../lib/types";
+import { normalizeCharacterSelectionConfig } from "../lib/characterSelection";
 
 interface ActionConfirmer {
   type: MatchActionConfirmerType;
@@ -156,6 +158,7 @@ interface AppContextValue {
     character_input_mode: CharacterInputMode,
     character_list_name: string | null,
     character_list: string[],
+    character_selection_config: TournamentCharacterSelectionConfig | null,
     default_player_side: TournamentDefaultPlayerSide
   ) => Promise<void>;
   removeTournament: (id?: string) => Promise<void>;
@@ -163,16 +166,18 @@ interface AppContextValue {
     name: string,
     character_name: string | null,
     attributes: Record<string, string>,
+    selected_characters?: Record<string, string[]>,
     player_id?: string
   ) => Promise<void>;
   editParticipantName: (player_id: string, name: string) => Promise<void>;
   setParticipantCharacter: (player_id: string, character_name: string | null) => Promise<void>;
+  setParticipantSelectedCharacters: (player_id: string, selected_characters: Record<string, string[]>) => Promise<void>;
   addAdmin: (name: string, attributes?: Record<string, string>) => Promise<void>;
   editAdminName: (admin_id: string, name: string) => Promise<void>;
   removeAdmin: (admin_id: string) => Promise<void>;
   removeParticipant: (player_id: string) => Promise<void>;
   swapSeeds: (player_id_a: string, player_id_b: string) => Promise<void>;
-  randomizeSeeds: () => Promise<void>;
+  randomizeSeeds: () => Promise<boolean>;
   generateBracket: () => Promise<void>;
   setGrandFinalReset: (enabled: boolean) => Promise<void>;
   setTournamentStatus: (status: TournamentStatus) => Promise<void>;
@@ -184,6 +189,7 @@ interface AppContextValue {
     character_input_mode: CharacterInputMode,
     character_list_name: string | null,
     character_list: string[],
+    character_selection_config: TournamentCharacterSelectionConfig | null,
     default_player_side: TournamentDefaultPlayerSide
   ) => Promise<void>;
 
@@ -1007,6 +1013,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_input_mode: CharacterInputMode,
       character_list_name: string | null,
       character_list: string[],
+      character_selection_config: TournamentCharacterSelectionConfig | null,
       default_player_side: TournamentDefaultPlayerSide
     ) => {
       const id = uuidv4();
@@ -1021,6 +1028,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         character_input_mode,
         character_list_name,
         normalizeCharacterList(character_list),
+        normalizeCharacterSelectionConfig(
+          character_input_mode,
+          character_selection_config,
+          character_list_name,
+          normalizeCharacterList(character_list)
+        ),
         default_player_side
       );
 
@@ -1093,6 +1106,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       name: string,
       character_name: string | null,
       attributes: Record<string, string>,
+      selected_characters: Record<string, string[]> = {},
       player_id?: string
     ) => {
       if (!tournament) return;
@@ -1115,7 +1129,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         nextSeed,
         name,
         sanitizedCharacter,
-        attributes
+        attributes,
+        selected_characters
       );
       await fetchTournament();
     },
@@ -1202,6 +1217,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [tournament, participants, fetchTournament]
   );
 
+  const setParticipantSelectedCharacters = useCallback(
+    async (player_id: string, selected_characters: Record<string, string[]>) => {
+      if (!tournament) return;
+      const db_module = await import("../lib/database");
+      await db_module.updateTournamentPlayerSelectedCharacters(
+        tournament.id,
+        player_id,
+        selected_characters
+      );
+      await fetchTournament();
+    },
+    [tournament, fetchTournament]
+  );
+
   const editParticipantName = useCallback(
     async (player_id: string, name: string) => {
       if (!tournament) return;
@@ -1227,12 +1256,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const randomizeSeeds = useCallback(async () => {
-    if (!tournament) return;
-    const shuffled = shuffleArray(participants.map((p) => p.player_id));
+    if (!tournament) return false;
+    const currentOrder = [...participants]
+      .sort((a, b) => a.seed - b.seed)
+      .map((p) => p.player_id);
+    const shuffled = shuffleArray(currentOrder);
+    const changed = shuffled.some((playerId, idx) => playerId !== currentOrder[idx]);
     for (let i = 0; i < shuffled.length; i++) {
       await updateTournamentPlayerSeed(tournament.id, shuffled[i], i + 1);
     }
     await fetchTournament();
+    return changed;
   }, [tournament, participants, fetchTournament]);
 
   const generateBracket = useCallback(async () => {
@@ -1248,6 +1282,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tournament.character_input_mode,
       tournament.character_list_name,
       tournament.character_list,
+      tournament.character_selection_config,
       tournament.default_player_side
     );
 
@@ -1292,6 +1327,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tournament.character_input_mode,
         tournament.character_list_name,
         tournament.character_list,
+        tournament.character_selection_config,
         tournament.default_player_side
       );
       await fetchTournament();
@@ -1308,6 +1344,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_input_mode: CharacterInputMode,
       character_list_name: string | null,
       character_list: string[],
+      character_selection_config: TournamentCharacterSelectionConfig | null,
       default_player_side: TournamentDefaultPlayerSide
     ) => {
       if (!tournament) return;
@@ -1321,6 +1358,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         character_input_mode,
         character_list_name,
         normalizeCharacterList(character_list),
+        normalizeCharacterSelectionConfig(
+          character_input_mode,
+          character_selection_config,
+          character_list_name,
+          normalizeCharacterList(character_list)
+        ),
         default_player_side
       );
 
@@ -2220,6 +2263,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     editAdminName,
     removeAdmin,
     setParticipantCharacter,
+    setParticipantSelectedCharacters,
     removeParticipant,
     swapSeeds,
     randomizeSeeds,
