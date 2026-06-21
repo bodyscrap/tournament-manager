@@ -6,8 +6,7 @@ const navItems = [
   { to: "/character-lists", label: "アイテムリスト", icon: "📚" },
   { to: "/tournament/setup", label: "大会管理", icon: "⚙️" },
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
-  { to: "/tournament/player-cards", label: "参加者カード", icon: "🪪" },
-  { to: "/tournament/admins", label: "管理者カード", icon: "🛡️" },
+  { to: "/tournament/users", label: "ユーザーリスト", icon: "👥" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {

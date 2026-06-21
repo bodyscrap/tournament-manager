@@ -1198,16 +1198,10 @@ export function TournamentSetupPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => navigate("/tournament/player-cards")}
+            onClick={() => navigate("/tournament/users")}
             className="text-xs px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
           >
-            🪪 参加者カード
-          </button>
-          <button
-            onClick={() => navigate("/tournament/admins")}
-            className="text-xs px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-lg"
-          >
-            🛡️ 管理者カード
+            👥 ユーザーリスト
           </button>
           {tournament.status === "setup" && !isReadOnly && (
             <button onClick={handleOpenSettings} className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg">
