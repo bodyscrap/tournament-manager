@@ -129,8 +129,8 @@ interface AppContextValue {
   fetchCharacterLists: () => Promise<void>;
   addCharacter: (name: string) => Promise<void>;
   removeCharacter: (id: string) => Promise<void>;
-  addCharacterList: (name: string, characters: string[]) => Promise<void>;
-  editCharacterList: (id: string, name: string, characters: string[]) => Promise<void>;
+  addCharacterList: (name: string, categoryName: string, items: string[]) => Promise<void>;
+  editCharacterList: (id: string, name: string, categoryName: string, items: string[]) => Promise<void>;
   removeCharacterList: (id: string) => Promise<void>;
   fetchPlayers: () => Promise<void>;
   addPlayer: (
@@ -1025,17 +1025,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await fetchCharacters();
   }, [fetchCharacters]);
 
-  const addCharacterList = useCallback(async (name: string, characters: string[]) => {
+  const addCharacterList = useCallback(async (name: string, categoryName: string, items: string[]) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await createCharacterList(uuidv4(), trimmed, normalizeCharacterList(characters));
+    await createCharacterList(uuidv4(), trimmed, categoryName, normalizeCharacterList(items));
     await fetchCharacterLists();
   }, [fetchCharacterLists]);
 
-  const editCharacterList = useCallback(async (id: string, name: string, characters: string[]) => {
+  const editCharacterList = useCallback(async (id: string, name: string, categoryName: string, items: string[]) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await updateCharacterList(id, trimmed, normalizeCharacterList(characters));
+    await updateCharacterList(id, trimmed, categoryName, normalizeCharacterList(items));
     await fetchCharacterLists();
   }, [fetchCharacterLists]);
 

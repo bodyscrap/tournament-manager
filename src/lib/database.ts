@@ -103,9 +103,11 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS character_lists (
       id             TEXT PRIMARY KEY,
-      name           TEXT NOT NULL UNIQUE,
+      name           TEXT NOT NULL,
+      category_name  TEXT NOT NULL DEFAULT 'キャラクター',
       characters_json TEXT NOT NULL DEFAULT '[]',
-      created_at     TEXT NOT NULL
+      created_at     TEXT NOT NULL,
+      UNIQUE(name, category_name)
     );
   `);
 
@@ -225,6 +227,36 @@ async function initSchema(db: Database): Promise<void> {
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN event_code TEXT NOT NULL DEFAULT '00'`);
   } catch { /* exists */ }
+
+  // Migration: extend character_lists to item-list schema (name + category_name)
+  let characterListsNeedsRebuild = false;
+  try {
+    await db.execute(`ALTER TABLE character_lists ADD COLUMN category_name TEXT NOT NULL DEFAULT 'キャラクター'`);
+    characterListsNeedsRebuild = true;
+  } catch { /* exists */ }
+  if (characterListsNeedsRebuild) {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS character_lists_v2 (
+          id              TEXT PRIMARY KEY,
+          name            TEXT NOT NULL,
+          category_name   TEXT NOT NULL DEFAULT 'キャラクター',
+          characters_json TEXT NOT NULL DEFAULT '[]',
+          created_at      TEXT NOT NULL,
+          UNIQUE(name, category_name)
+        );
+      `);
+      await db.execute(`
+        INSERT OR IGNORE INTO character_lists_v2 (id, name, category_name, characters_json, created_at)
+        SELECT id, name, COALESCE(NULLIF(category_name, ''), 'キャラクター'), characters_json, created_at
+        FROM character_lists;
+      `);
+      await db.execute(`DROP TABLE character_lists`);
+      await db.execute(`ALTER TABLE character_lists_v2 RENAME TO character_lists`);
+    } catch {
+      // ignore migration failures to keep backward compatibility
+    }
+  }
 
   // Migration: add per-tournament participant fields
   try {
@@ -379,11 +411,11 @@ export async function deleteCharacterMaster(id: string): Promise<void> {
 }
 
 function rowToCharacterList(row: CharacterListRow): CharacterList {
-  let characters: string[] = [];
+  let items: string[] = [];
   try {
     const parsed = JSON.parse(row.characters_json);
     if (Array.isArray(parsed)) {
-      characters = parsed
+      items = parsed
         .map((v) => (typeof v === "string" ? v.trim() : ""))
         .filter((v) => v.length > 0);
     }
@@ -393,7 +425,8 @@ function rowToCharacterList(row: CharacterListRow): CharacterList {
   return {
     id: row.id,
     name: row.name,
-    characters,
+    category_name: row.category_name?.trim() || "キャラクター",
+    items,
     created_at: row.created_at,
   };
 }
@@ -409,26 +442,30 @@ export async function getCharacterLists(): Promise<CharacterList[]> {
 export async function createCharacterList(
   id: string,
   name: string,
-  characters: string[]
+  category_name: string,
+  items: string[]
 ): Promise<void> {
   const db = await getDb();
-  const normalized = normalizeCharacterList(characters);
+  const normalized = normalizeCharacterList(items);
+  const normalizedCategory = category_name.trim() || "キャラクター";
   await db.execute(
-    `INSERT INTO character_lists (id, name, characters_json, created_at) VALUES ($1, $2, $3, $4)`,
-    [id, name, JSON.stringify(normalized), new Date().toISOString()]
+    `INSERT INTO character_lists (id, name, category_name, characters_json, created_at) VALUES ($1, $2, $3, $4, $5)`,
+    [id, name, normalizedCategory, JSON.stringify(normalized), new Date().toISOString()]
   );
 }
 
 export async function updateCharacterList(
   id: string,
   name: string,
-  characters: string[]
+  category_name: string,
+  items: string[]
 ): Promise<void> {
   const db = await getDb();
-  const normalized = normalizeCharacterList(characters);
+  const normalized = normalizeCharacterList(items);
+  const normalizedCategory = category_name.trim() || "キャラクター";
   await db.execute(
-    `UPDATE character_lists SET name = $1, characters_json = $2 WHERE id = $3`,
-    [name, JSON.stringify(normalized), id]
+    `UPDATE character_lists SET name = $1, category_name = $2, characters_json = $3 WHERE id = $4`,
+    [name, normalizedCategory, JSON.stringify(normalized), id]
   );
 }
 
