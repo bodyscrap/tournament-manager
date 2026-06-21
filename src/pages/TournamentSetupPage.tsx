@@ -769,10 +769,10 @@ export function TournamentSetupPage() {
 
     setCreatingUsedCharacterList(true);
     try {
-      await addCharacterList(listName, usedCharacters);
-      alert(`キャラクターリスト「${listName}」を作成しました。`);
+      await addCharacterList(listName, "キャラクター", usedCharacters);
+      alert(`アイテムリスト「${listName} - キャラクター」を作成しました。`);
     } catch {
-      alert("キャラクターリストの作成に失敗しました。時間をおいて再試行してください。");
+      alert("アイテムリストの作成に失敗しました。時間をおいて再試行してください。");
     } finally {
       setCreatingUsedCharacterList(false);
     }
@@ -965,6 +965,30 @@ export function TournamentSetupPage() {
                   .map((draft, idx) => (
                     <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                       <p className="text-xs font-semibold text-gray-500 mb-2">カテゴリ {idx + 1}</p>
+                      <select
+                        value={draft.selectedListId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setCreateCategoryDrafts((prev) => {
+                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
+                            const selected = characterLists.find((list) => list.id === id);
+                            next[idx] = {
+                              ...next[idx],
+                              selectedListId: id,
+                              listName: selected?.name ?? next[idx].listName,
+                              categoryName: selected?.category_name ?? next[idx].categoryName,
+                              listText: selected ? selected.items.join("\n") : next[idx].listText,
+                            };
+                            return next;
+                          });
+                        }}
+                        className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="">-- 手入力 / カスタム --</option>
+                        {characterLists.map((list) => (
+                          <option key={list.id} value={list.id}>{`${list.name} - ${list.category_name}`}</option>
+                        ))}
+                      </select>
                       <input
                         value={draft.categoryName}
                         onChange={(e) => {
@@ -978,29 +1002,6 @@ export function TournamentSetupPage() {
                         placeholder="カテゴリ名"
                         className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       />
-                      <select
-                        value={draft.selectedListId}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          setCreateCategoryDrafts((prev) => {
-                            const next = ensureCategoryDraftCount(prev, createCategoryCount);
-                            const selected = characterLists.find((list) => list.id === id);
-                            next[idx] = {
-                              ...next[idx],
-                              selectedListId: id,
-                              listName: selected?.name ?? next[idx].listName,
-                              listText: selected ? selected.characters.join("\n") : next[idx].listText,
-                            };
-                            return next;
-                          });
-                        }}
-                        className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                      >
-                        <option value="">-- 手入力 / カスタム --</option>
-                        {characterLists.map((list) => (
-                          <option key={list.id} value={list.id}>{list.name}</option>
-                        ))}
-                      </select>
                       <input
                         value={draft.listName}
                         onChange={(e) => {
@@ -1400,6 +1401,30 @@ export function TournamentSetupPage() {
                     .map((draft, idx) => (
                       <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                         <p className="text-xs font-semibold text-gray-500 mb-2">カテゴリ {idx + 1}</p>
+                        <select
+                          value={draft.selectedListId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setEditCategoryDrafts((prev) => {
+                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
+                              const selected = characterLists.find((list) => list.id === id);
+                              next[idx] = {
+                                ...next[idx],
+                                selectedListId: id,
+                                listName: selected?.name ?? next[idx].listName,
+                                categoryName: selected?.category_name ?? next[idx].categoryName,
+                                listText: selected ? selected.items.join("\n") : next[idx].listText,
+                              };
+                              return next;
+                            });
+                          }}
+                          className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                          <option value="">-- 手入力 / カスタム --</option>
+                          {characterLists.map((list) => (
+                            <option key={list.id} value={list.id}>{`${list.name} - ${list.category_name}`}</option>
+                          ))}
+                        </select>
                         <input
                           value={draft.categoryName}
                           onChange={(e) => {
@@ -1413,29 +1438,6 @@ export function TournamentSetupPage() {
                           placeholder="カテゴリ名"
                           className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         />
-                        <select
-                          value={draft.selectedListId}
-                          onChange={(e) => {
-                            const id = e.target.value;
-                            setEditCategoryDrafts((prev) => {
-                              const next = ensureCategoryDraftCount(prev, editCategoryCount);
-                              const selected = characterLists.find((list) => list.id === id);
-                              next[idx] = {
-                                ...next[idx],
-                                selectedListId: id,
-                                listName: selected?.name ?? next[idx].listName,
-                                listText: selected ? selected.characters.join("\n") : next[idx].listText,
-                              };
-                              return next;
-                            });
-                          }}
-                          className="w-full mb-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        >
-                          <option value="">-- 手入力 / カスタム --</option>
-                          {characterLists.map((list) => (
-                            <option key={list.id} value={list.id}>{list.name}</option>
-                          ))}
-                        </select>
                         <input
                           value={draft.listName}
                           onChange={(e) => {
@@ -1951,7 +1953,7 @@ export function TournamentSetupPage() {
           {tournament.character_input_mode !== "free_input" && (
             <div className="mt-5 pt-4 border-t border-gray-200">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-gray-700">📊 キャラ使用率 statistics</h4>
+                <h4 className="font-semibold text-gray-700">📊 使用率</h4>
                 <p className="text-xs text-gray-500">同一プレイヤー内の重複選択は1回として集計</p>
               </div>
 
@@ -1974,7 +1976,7 @@ export function TournamentSetupPage() {
                             </colgroup>
                             <thead>
                               <tr className="text-left text-gray-500 border-b border-gray-200">
-                                <th className="py-2 pr-3">キャラ</th>
+                                <th className="py-2 pr-3">項目</th>
                                 <th className="py-2 pr-3 whitespace-nowrap">使用人数</th>
                                 <th className="py-2">使用率</th>
                               </tr>

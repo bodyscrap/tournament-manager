@@ -37,13 +37,15 @@ export interface CharacterMasterRow {
 export interface CharacterList {
   id: string;
   name: string;
-  characters: string[];
+  category_name: string;
+  items: string[];
   created_at: string;
 }
 
 export interface CharacterListRow {
   id: string;
   name: string;
+  category_name: string;
   characters_json: string;
   created_at: string;
 }
