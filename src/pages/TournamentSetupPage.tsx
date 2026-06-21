@@ -21,6 +21,84 @@ type CharacterCategoryDraft = {
   forbidDuplicateItem: boolean;
 };
 
+type CreateFormDefaults = {
+  type: "single_elimination" | "double_elimination";
+  maxParticipants: number;
+  grandFinalReset: boolean;
+  defaultPlayerSide: TournamentDefaultPlayerSide;
+  resultAuthMode: MatchActionAuthMode;
+  dqAuthMode: MatchActionAuthMode;
+  forcedLossAuthMode: MatchActionAuthMode;
+};
+
+const CREATE_FORM_DEFAULTS_STORAGE_KEY = "tournament.create.defaults.v1";
+
+const FALLBACK_CREATE_FORM_DEFAULTS: CreateFormDefaults = {
+  type: "double_elimination",
+  maxParticipants: 8,
+  grandFinalReset: true,
+  defaultPlayerSide: "upper_1p",
+  resultAuthMode: "none",
+  dqAuthMode: "target_player",
+  forcedLossAuthMode: "admin",
+};
+
+function loadCreateFormDefaults(): CreateFormDefaults {
+  try {
+    const raw = window.localStorage.getItem(CREATE_FORM_DEFAULTS_STORAGE_KEY);
+    if (!raw) return FALLBACK_CREATE_FORM_DEFAULTS;
+    const parsed = JSON.parse(raw) as Partial<CreateFormDefaults>;
+    return {
+      type: parsed.type === "single_elimination" || parsed.type === "double_elimination"
+        ? parsed.type
+        : FALLBACK_CREATE_FORM_DEFAULTS.type,
+      maxParticipants: Math.min(256, Math.max(2, Math.floor(parsed.maxParticipants ?? FALLBACK_CREATE_FORM_DEFAULTS.maxParticipants))),
+      grandFinalReset: typeof parsed.grandFinalReset === "boolean"
+        ? parsed.grandFinalReset
+        : FALLBACK_CREATE_FORM_DEFAULTS.grandFinalReset,
+      defaultPlayerSide:
+        parsed.defaultPlayerSide === "upper_1p" ||
+        parsed.defaultPlayerSide === "upper_2p" ||
+        parsed.defaultPlayerSide === "random"
+          ? parsed.defaultPlayerSide
+          : FALLBACK_CREATE_FORM_DEFAULTS.defaultPlayerSide,
+      resultAuthMode:
+        parsed.resultAuthMode === "none" ||
+        parsed.resultAuthMode === "admin" ||
+        parsed.resultAuthMode === "match_participant" ||
+        parsed.resultAuthMode === "both_players" ||
+        parsed.resultAuthMode === "winner" ||
+        parsed.resultAuthMode === "loser"
+          ? parsed.resultAuthMode
+          : FALLBACK_CREATE_FORM_DEFAULTS.resultAuthMode,
+      dqAuthMode:
+        parsed.dqAuthMode === "admin" ||
+        parsed.dqAuthMode === "auth" ||
+        parsed.dqAuthMode === "target_player" ||
+        parsed.dqAuthMode === "admin_or_participant"
+          ? (parsed.dqAuthMode === "admin_or_participant" ? "target_player" : parsed.dqAuthMode)
+          : FALLBACK_CREATE_FORM_DEFAULTS.dqAuthMode,
+      forcedLossAuthMode:
+        parsed.forcedLossAuthMode === "admin" ||
+        parsed.forcedLossAuthMode === "auth" ||
+        parsed.forcedLossAuthMode === "target_player" ||
+        parsed.forcedLossAuthMode === "admin_or_participant"
+          ? (parsed.forcedLossAuthMode === "admin_or_participant" ? "target_player" : parsed.forcedLossAuthMode)
+          : FALLBACK_CREATE_FORM_DEFAULTS.forcedLossAuthMode,
+    };
+  } catch {
+    return FALLBACK_CREATE_FORM_DEFAULTS;
+  }
+}
+
+function saveCreateFormDefaults(defaults: CreateFormDefaults) {
+  try {
+    window.localStorage.setItem(CREATE_FORM_DEFAULTS_STORAGE_KEY, JSON.stringify(defaults));
+  } catch {
+    // ignore storage errors (private mode / quota)
+  }
+}
+
 function createCategoryDraft(index: number): CharacterCategoryDraft {
   return {
     categoryName: `カテゴリ${index}`,
@@ -143,18 +221,20 @@ export function TournamentSetupPage() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const [createInitialDefaults] = useState<CreateFormDefaults>(loadCreateFormDefaults);
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
   const [createEventCode, setCreateEventCode] = useState("00");
   const [createTournamentCode, setCreateTournamentCode] = useState("0000");
-  const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
-  const [maxP, setMaxP] = useState(8);
-  const [gfReset, setGfReset] = useState(true);
-  const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
-  const [createResultAuthMode, setCreateResultAuthMode] = useState<MatchActionAuthMode>("none");
-  const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>("target_player");
-  const [createForcedLossAuthMode, setCreateForcedLossAuthMode] = useState<MatchActionAuthMode>("admin");
+  const [type, setType] = useState<"single_elimination" | "double_elimination">(createInitialDefaults.type);
+  const [maxP, setMaxP] = useState(createInitialDefaults.maxParticipants);
+  const [gfReset, setGfReset] = useState(createInitialDefaults.grandFinalReset);
+  const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>(createInitialDefaults.defaultPlayerSide);
+  const [createResultAuthMode, setCreateResultAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.resultAuthMode);
+  const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.dqAuthMode);
+  const [createForcedLossAuthMode, setCreateForcedLossAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.forcedLossAuthMode);
+  const [saveCreateDefaultsOnCreate, setSaveCreateDefaultsOnCreate] = useState(false);
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
   const [createCategoryCount, setCreateCategoryCount] = useState(1);
   const [createCategoryDrafts, setCreateCategoryDrafts] = useState<CharacterCategoryDraft[]>([
@@ -423,6 +503,17 @@ export function TournamentSetupPage() {
         createDqAuthMode,
         createForcedLossAuthMode
       );
+      if (saveCreateDefaultsOnCreate) {
+        saveCreateFormDefaults({
+          type,
+          maxParticipants: maxP,
+          grandFinalReset: gfReset,
+          defaultPlayerSide: createDefaultPlayerSide,
+          resultAuthMode: createResultAuthMode,
+          dqAuthMode: createDqAuthMode,
+          forcedLossAuthMode: createForcedLossAuthMode,
+        });
+      }
     } finally {
       setCreating(false);
     }
@@ -826,6 +917,18 @@ export function TournamentSetupPage() {
               <option value="admin">管理者</option>
             </select>
           </div>
+          <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={saveCreateDefaultsOnCreate}
+              onChange={(e) => setSaveCreateDefaultsOnCreate(e.target.checked)}
+              className="h-4 w-4 text-blue-600"
+            />
+            ここまでの設定をデフォルトとして保存
+          </label>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            次回の初期値として保存: トーナメント形式、参加上限、グランドファイナルリセット、デフォルトプレイヤーサイド、通常結果入力時の認証、DQ時の認証、強制敗北時の認証。保存しない: 大会名、イベントコード、大会コード、使用キャラ設定。
+          </p>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
             <select
