@@ -5,6 +5,7 @@ export type ExportCardItem = {
   id: string;
   name: string;
   userCode: string;
+  eventCode: string;
   tournamentCode: string;
   tournamentName: string;
   qrPayload: string;
@@ -157,12 +158,14 @@ export async function exportSingleCardImage(item: ExportCardItem) {
 
   await drawCard(ctx, item, 0, 0, cardW, cardH);
 
-  const filename = `${sanitizeFileName(item.tournamentCode)}_${sanitizeFileName(item.tournamentName)}_${sanitizeFileName(item.name)}.png`;
+  const filename = `${sanitizeFileName(item.eventCode)}_${sanitizeFileName(item.tournamentCode)}_${sanitizeFileName(item.tournamentName)}_${sanitizeFileName(item.name)}.png`;
   downloadDataUrl(canvas.toDataURL("image/png"), filename);
 }
 
-export async function exportA4SheetImages(items: ExportCardItem[], tournamentName: string) {
+export async function exportA4SheetImages(items: ExportCardItem[], _tournamentName?: string) {
   if (items.length === 0) return;
+
+  const head = items[0];
 
   const pageCapacity = SHEET_COLS * SHEET_ROWS;
   const totalPages = Math.ceil(items.length / pageCapacity);
@@ -197,7 +200,7 @@ export async function exportA4SheetImages(items: ExportCardItem[], tournamentNam
       await drawCard(ctx, pageItems[i], x, y, cardW, cardH);
     }
 
-    const filename = `${sanitizeFileName(tournamentName)}_A4_sheet_${page + 1}_of_${totalPages}.png`;
+    const filename = `${sanitizeFileName(head.eventCode)}_${sanitizeFileName(head.tournamentCode)}_${sanitizeFileName(head.tournamentName)}_sheet_${page + 1}_of_${totalPages}.png`;
     downloadDataUrl(canvas.toDataURL("image/png"), filename);
   }
 }

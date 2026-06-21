@@ -6,8 +6,7 @@ import { PlayersPage } from "./pages/PlayersPage";
 import { CharacterListsPage } from "./pages/CharacterListsPage";
 import { TournamentSetupPage } from "./pages/TournamentSetupPage";
 import { BracketPage } from "./pages/BracketPage";
-import { TournamentPlayerCardsPage } from "./pages/TournamentPlayerCardsPage";
-import { TournamentAdminsPage } from "./pages/TournamentAdminsPage";
+import { TournamentUsersPage } from "./pages/TournamentUsersPage";
 
 function AppShell() {
   const { initialized } = useAppContext();
@@ -33,8 +32,9 @@ function AppShell() {
           <Route path="/character-lists" element={<CharacterListsPage />} />
           <Route path="/tournament/setup" element={<TournamentSetupPage />} />
           <Route path="/tournament/bracket" element={<BracketPage />} />
-          <Route path="/tournament/player-cards" element={<TournamentPlayerCardsPage />} />
-          <Route path="/tournament/admins" element={<TournamentAdminsPage />} />
+          <Route path="/tournament/users" element={<TournamentUsersPage />} />
+          <Route path="/tournament/player-cards" element={<TournamentUsersPage />} />
+          <Route path="/tournament/admins" element={<TournamentUsersPage />} />
         </Routes>
       </main>
     </div>

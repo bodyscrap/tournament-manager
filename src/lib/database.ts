@@ -16,6 +16,7 @@ import type {
   MatchActionLogRow,
   MatchActionType,
   MatchActionConfirmerType,
+  MatchActionAuthMode,
   Match,
   MatchRow,
   BracketTree,
@@ -102,9 +103,11 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS character_lists (
       id             TEXT PRIMARY KEY,
-      name           TEXT NOT NULL UNIQUE,
+      name           TEXT NOT NULL,
+      category_name  TEXT NOT NULL DEFAULT 'キャラクター',
       characters_json TEXT NOT NULL DEFAULT '[]',
-      created_at     TEXT NOT NULL
+      created_at     TEXT NOT NULL,
+      UNIQUE(name, category_name)
     );
   `);
 
@@ -119,6 +122,9 @@ async function initSchema(db: Database): Promise<void> {
       grand_final_reset  INTEGER NOT NULL DEFAULT 1,
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
       default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
+      result_auth_mode   TEXT NOT NULL DEFAULT 'none',
+      dq_auth_mode       TEXT NOT NULL DEFAULT 'target_player',
+      forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin',
       character_list_json TEXT,
       character_selection_config_json TEXT,
       created_at         TEXT NOT NULL
@@ -201,6 +207,15 @@ async function initSchema(db: Database): Promise<void> {
     await db.execute(`ALTER TABLE tournament ADD COLUMN default_player_side TEXT NOT NULL DEFAULT 'upper_1p'`);
   } catch { /* exists */ }
   try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN result_auth_mode TEXT NOT NULL DEFAULT 'none'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'target_player'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin'`);
+  } catch { /* exists */ }
+  try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_list_name TEXT`);
   } catch { /* exists */ }
   try {
@@ -212,6 +227,36 @@ async function initSchema(db: Database): Promise<void> {
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN event_code TEXT NOT NULL DEFAULT '00'`);
   } catch { /* exists */ }
+
+  // Migration: extend character_lists to item-list schema (name + category_name)
+  let characterListsNeedsRebuild = false;
+  try {
+    await db.execute(`ALTER TABLE character_lists ADD COLUMN category_name TEXT NOT NULL DEFAULT 'キャラクター'`);
+    characterListsNeedsRebuild = true;
+  } catch { /* exists */ }
+  if (characterListsNeedsRebuild) {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS character_lists_v2 (
+          id              TEXT PRIMARY KEY,
+          name            TEXT NOT NULL,
+          category_name   TEXT NOT NULL DEFAULT 'キャラクター',
+          characters_json TEXT NOT NULL DEFAULT '[]',
+          created_at      TEXT NOT NULL,
+          UNIQUE(name, category_name)
+        );
+      `);
+      await db.execute(`
+        INSERT OR IGNORE INTO character_lists_v2 (id, name, category_name, characters_json, created_at)
+        SELECT id, name, COALESCE(NULLIF(category_name, ''), 'キャラクター'), characters_json, created_at
+        FROM character_lists;
+      `);
+      await db.execute(`DROP TABLE character_lists`);
+      await db.execute(`ALTER TABLE character_lists_v2 RENAME TO character_lists`);
+    } catch {
+      // ignore migration failures to keep backward compatibility
+    }
+  }
 
   // Migration: add per-tournament participant fields
   try {
@@ -366,11 +411,11 @@ export async function deleteCharacterMaster(id: string): Promise<void> {
 }
 
 function rowToCharacterList(row: CharacterListRow): CharacterList {
-  let characters: string[] = [];
+  let items: string[] = [];
   try {
     const parsed = JSON.parse(row.characters_json);
     if (Array.isArray(parsed)) {
-      characters = parsed
+      items = parsed
         .map((v) => (typeof v === "string" ? v.trim() : ""))
         .filter((v) => v.length > 0);
     }
@@ -380,7 +425,8 @@ function rowToCharacterList(row: CharacterListRow): CharacterList {
   return {
     id: row.id,
     name: row.name,
-    characters,
+    category_name: row.category_name?.trim() || "キャラクター",
+    items,
     created_at: row.created_at,
   };
 }
@@ -396,26 +442,30 @@ export async function getCharacterLists(): Promise<CharacterList[]> {
 export async function createCharacterList(
   id: string,
   name: string,
-  characters: string[]
+  category_name: string,
+  items: string[]
 ): Promise<void> {
   const db = await getDb();
-  const normalized = normalizeCharacterList(characters);
+  const normalized = normalizeCharacterList(items);
+  const normalizedCategory = category_name.trim() || "キャラクター";
   await db.execute(
-    `INSERT INTO character_lists (id, name, characters_json, created_at) VALUES ($1, $2, $3, $4)`,
-    [id, name, JSON.stringify(normalized), new Date().toISOString()]
+    `INSERT INTO character_lists (id, name, category_name, characters_json, created_at) VALUES ($1, $2, $3, $4, $5)`,
+    [id, name, normalizedCategory, JSON.stringify(normalized), new Date().toISOString()]
   );
 }
 
 export async function updateCharacterList(
   id: string,
   name: string,
-  characters: string[]
+  category_name: string,
+  items: string[]
 ): Promise<void> {
   const db = await getDb();
-  const normalized = normalizeCharacterList(characters);
+  const normalized = normalizeCharacterList(items);
+  const normalizedCategory = category_name.trim() || "キャラクター";
   await db.execute(
-    `UPDATE character_lists SET name = $1, characters_json = $2 WHERE id = $3`,
-    [name, JSON.stringify(normalized), id]
+    `UPDATE character_lists SET name = $1, category_name = $2, characters_json = $3 WHERE id = $4`,
+    [name, normalizedCategory, JSON.stringify(normalized), id]
   );
 }
 
@@ -476,6 +526,13 @@ function rowToTournament(row: TournamentRow): Tournament {
     character_list: flattenedCharacterList,
     character_selection_config: normalizedConfig,
     default_player_side: row.default_player_side ?? "upper_1p",
+    result_auth_mode: (row.result_auth_mode ?? "none") as MatchActionAuthMode,
+    dq_auth_mode: ((row.dq_auth_mode ?? "target_player") === "admin_or_participant"
+      ? "target_player"
+      : (row.dq_auth_mode ?? "target_player")) as MatchActionAuthMode,
+    forced_loss_auth_mode: ((row.forced_loss_auth_mode ?? "admin") === "admin_or_participant"
+      ? "target_player"
+      : (row.forced_loss_auth_mode ?? "admin")) as MatchActionAuthMode,
     created_at: row.created_at,
   };
 }
@@ -527,7 +584,10 @@ export async function createTournament(
   character_list_name: string | null,
   character_list: string[],
   character_selection_config: TournamentCharacterSelectionConfig | null,
-  default_player_side: TournamentDefaultPlayerSide
+  default_player_side: TournamentDefaultPlayerSide,
+  result_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode,
+  forced_loss_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -545,8 +605,8 @@ export async function createTournament(
     : null;
   const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
-    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, character_selection_config_json, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13)`,
+    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, result_auth_mode, dq_auth_mode, forced_loss_auth_mode, character_list_name, character_list_json, character_selection_config_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       id,
       name,
@@ -557,6 +617,9 @@ export async function createTournament(
       grand_final_reset ? 1 : 0,
       character_input_mode,
       default_player_side,
+      result_auth_mode,
+      dq_auth_mode,
+      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,
@@ -595,7 +658,10 @@ export async function updateTournamentSettings(
   character_list_name: string | null,
   character_list: string[],
   character_selection_config: TournamentCharacterSelectionConfig | null,
-  default_player_side: TournamentDefaultPlayerSide
+  default_player_side: TournamentDefaultPlayerSide,
+  result_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode,
+  forced_loss_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -621,10 +687,13 @@ export async function updateTournamentSettings(
          grand_final_reset = $5,
          character_input_mode = $6,
          default_player_side = $7,
-         character_list_name = $8,
-         character_list_json = $9,
-         character_selection_config_json = $10
-     WHERE id = $11`,
+         result_auth_mode = $8,
+         dq_auth_mode = $9,
+         forced_loss_auth_mode = $10,
+         character_list_name = $11,
+         character_list_json = $12,
+         character_selection_config_json = $13
+       WHERE id = $14`,
     [
       type,
       event_code,
@@ -633,6 +702,9 @@ export async function updateTournamentSettings(
       grand_final_reset ? 1 : 0,
       character_input_mode,
       default_player_side,
+      result_auth_mode,
+      dq_auth_mode,
+      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,

@@ -17,6 +17,7 @@ export function CharacterListsPage() {
 
   const [editing, setEditing] = useState<CharacterList | null>(null);
   const [name, setName] = useState("");
+  const [categoryName, setCategoryName] = useState("");
   const [listText, setListText] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -28,24 +29,26 @@ export function CharacterListsPage() {
   const resetForm = () => {
     setEditing(null);
     setName("");
+    setCategoryName("");
     setListText("");
   };
 
   const handleSave = async () => {
     const trimmedName = name.trim();
-    if (!trimmedName) return;
+    const trimmedCategoryName = categoryName.trim();
+    if (!trimmedName || !trimmedCategoryName) return;
 
     const items = parseLinesToUniqueList(listText);
     setSaving(true);
     try {
       if (editing) {
-        await editCharacterList(editing.id, trimmedName, items);
+        await editCharacterList(editing.id, trimmedName, trimmedCategoryName, items);
       } else {
-        await addCharacterList(trimmedName, items);
+        await addCharacterList(trimmedName, trimmedCategoryName, items);
       }
       resetForm();
     } catch {
-      alert("保存に失敗しました。リスト名の重複がないか確認してください。");
+      alert("保存に失敗しました。リスト名とカテゴリ名の組み合わせ重複がないか確認してください。");
     } finally {
       setSaving(false);
     }
@@ -54,7 +57,8 @@ export function CharacterListsPage() {
   const startEdit = (list: CharacterList) => {
     setEditing(list);
     setName(list.name);
-    setListText(toLinesText(list.characters));
+    setCategoryName(list.category_name);
+    setListText(toLinesText(list.items));
   };
 
   const duplicateList = async (list: CharacterList) => {
@@ -65,7 +69,7 @@ export function CharacterListsPage() {
     );
     setSaving(true);
     try {
-      await addCharacterList(duplicateName, list.characters);
+      await addCharacterList(duplicateName, list.category_name, list.items);
     } catch {
       alert("複製に失敗しました。時間をおいて再試行してください。");
     } finally {
@@ -76,7 +80,7 @@ export function CharacterListsPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">使用キャラクターリスト</h2>
+        <h2 className="text-2xl font-bold text-gray-800">アイテムリスト</h2>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -97,12 +101,22 @@ export function CharacterListsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">キャラクター一覧</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ名</label>
+              <input
+                value={categoryName}
+                onChange={(e) => setCategoryName(e.target.value)}
+                placeholder="例: キャラクター / ステージ"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">アイテム一覧</label>
               <textarea
                 value={listText}
                 onChange={(e) => setListText(e.target.value)}
                 rows={10}
-                placeholder="1行に1キャラクター名"
+                placeholder="1行に1アイテム名"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-xs text-gray-500 mt-1">重複や空行は保存時に自動で整理されます。</p>
@@ -111,7 +125,7 @@ export function CharacterListsPage() {
             <div className="flex gap-2 pt-1">
               <button
                 onClick={handleSave}
-                disabled={saving || !name.trim()}
+                disabled={saving || !name.trim() || !categoryName.trim()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
               >
                 {saving ? "保存中..." : editing ? "更新" : "作成"}
@@ -137,8 +151,8 @@ export function CharacterListsPage() {
                 <div key={list.id} className="border border-gray-200 rounded-lg p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <p className="font-medium text-gray-800">{list.name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{list.characters.length} キャラクター</p>
+                      <p className="font-medium text-gray-800">{list.name} - {list.category_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{list.items.length} 項目</p>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
@@ -156,7 +170,7 @@ export function CharacterListsPage() {
                       </button>
                       <button
                         onClick={async () => {
-                          if (!confirm(`「${list.name}」を削除しますか？`)) return;
+                          if (!confirm(`「${list.name} - ${list.category_name}」を削除しますか？`)) return;
                           await removeCharacterList(list.id);
                           if (editing?.id === list.id) resetForm();
                         }}
@@ -166,15 +180,15 @@ export function CharacterListsPage() {
                       </button>
                     </div>
                   </div>
-                  {list.characters.length > 0 && (
+                  {list.items.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {list.characters.slice(0, 10).map((name) => (
+                      {list.items.slice(0, 10).map((name) => (
                         <span key={name} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">
                           {name}
                         </span>
                       ))}
-                      {list.characters.length > 10 && (
-                        <span className="text-xs text-gray-400">+{list.characters.length - 10}</span>
+                      {list.items.length > 10 && (
+                        <span className="text-xs text-gray-400">+{list.items.length - 10}</span>
                       )}
                     </div>
                   )}

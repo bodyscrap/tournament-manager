@@ -24,6 +24,7 @@ import {
   addTournamentPlayer,
   updateTournamentPlayerCode,
   getTournamentAdmins,
+  getMatchActionLogsByTournament,
   addTournamentAdmin,
   removeTournamentAdmin,
   updateTournamentAdminName,
@@ -96,6 +97,8 @@ import type {
   RoundLock,
   MatchPlayerSide,
   MatchActionConfirmerType,
+  MatchActionLog,
+  MatchActionAuthMode,
 } from "../lib/types";
 import { normalizeCharacterSelectionConfig } from "../lib/characterSelection";
 
@@ -107,6 +110,7 @@ interface ActionConfirmer {
 }
 
 interface ScoreActionAuth {
+  resultConfirmer?: ActionConfirmer | null;
   dqConfirmer?: ActionConfirmer | null;
   forcedLossConfirmer?: ActionConfirmer | null;
 }
@@ -125,8 +129,8 @@ interface AppContextValue {
   fetchCharacterLists: () => Promise<void>;
   addCharacter: (name: string) => Promise<void>;
   removeCharacter: (id: string) => Promise<void>;
-  addCharacterList: (name: string, characters: string[]) => Promise<void>;
-  editCharacterList: (id: string, name: string, characters: string[]) => Promise<void>;
+  addCharacterList: (name: string, categoryName: string, items: string[]) => Promise<void>;
+  editCharacterList: (id: string, name: string, categoryName: string, items: string[]) => Promise<void>;
   removeCharacterList: (id: string) => Promise<void>;
   fetchPlayers: () => Promise<void>;
   addPlayer: (
@@ -155,6 +159,7 @@ interface AppContextValue {
   participants: TournamentPlayer[];
   admins: TournamentAdmin[];
   matches: Match[];
+  matchActionLogs: MatchActionLog[];
   fetchTournament: () => Promise<void>;
   createNew: (
     event_code: string,
@@ -167,7 +172,10 @@ interface AppContextValue {
     character_list_name: string | null,
     character_list: string[],
     character_selection_config: TournamentCharacterSelectionConfig | null,
-    default_player_side: TournamentDefaultPlayerSide
+    default_player_side: TournamentDefaultPlayerSide,
+    result_auth_mode: MatchActionAuthMode,
+    dq_auth_mode: MatchActionAuthMode,
+    forced_loss_auth_mode: MatchActionAuthMode
   ) => Promise<void>;
   removeTournament: (id?: string) => Promise<void>;
   addParticipant: (
@@ -187,6 +195,7 @@ interface AppContextValue {
   swapSeeds: (player_id_a: string, player_id_b: string) => Promise<void>;
   randomizeSeeds: () => Promise<boolean>;
   generateBracket: () => Promise<void>;
+  clearBracket: () => Promise<void>;
   setGrandFinalReset: (enabled: boolean) => Promise<void>;
   setTournamentStatus: (status: TournamentStatus) => Promise<void>;
   updateTournamentSettings: (
@@ -199,7 +208,10 @@ interface AppContextValue {
     character_list_name: string | null,
     character_list: string[],
     character_selection_config: TournamentCharacterSelectionConfig | null,
-    default_player_side: TournamentDefaultPlayerSide
+    default_player_side: TournamentDefaultPlayerSide,
+    result_auth_mode: MatchActionAuthMode,
+    dq_auth_mode: MatchActionAuthMode,
+    forced_loss_auth_mode: MatchActionAuthMode
   ) => Promise<void>;
 
   // Bracket trees
@@ -515,7 +527,30 @@ async function writeMatchActionLogs(
   forcedLoserId: string | null,
   auth?: ScoreActionAuth
 ): Promise<void> {
-  if (dqPlayerIds.length > 0 && auth?.dqConfirmer) {
+  const noneConfirmer = {
+    type: "none" as const,
+    id: "",
+    name: "認証なし",
+    code: "",
+  };
+  if (forcedLoserId) {
+    const forcedConfirmer = auth?.forcedLossConfirmer ?? noneConfirmer;
+    await insertMatchActionLog(
+      uuidv4(),
+      tournamentId,
+      matchId,
+      "forced_loss",
+      forcedLoserId,
+      forcedConfirmer.type,
+      forcedConfirmer.id,
+      forcedConfirmer.name,
+      forcedConfirmer.code
+    );
+    return;
+  }
+
+  if (dqPlayerIds.length > 0) {
+    const dqConfirmer = auth?.dqConfirmer ?? noneConfirmer;
     for (const targetPlayerId of dqPlayerIds) {
       await insertMatchActionLog(
         uuidv4(),
@@ -523,27 +558,27 @@ async function writeMatchActionLogs(
         matchId,
         "dq",
         targetPlayerId,
-        auth.dqConfirmer.type,
-        auth.dqConfirmer.id,
-        auth.dqConfirmer.name,
-        auth.dqConfirmer.code
+        dqConfirmer.type,
+        dqConfirmer.id,
+        dqConfirmer.name,
+        dqConfirmer.code
       );
     }
+    return;
   }
 
-  if (forcedLoserId && auth?.forcedLossConfirmer) {
-    await insertMatchActionLog(
-      uuidv4(),
-      tournamentId,
-      matchId,
-      "forced_loss",
-      forcedLoserId,
-      auth.forcedLossConfirmer.type,
-      auth.forcedLossConfirmer.id,
-      auth.forcedLossConfirmer.name,
-      auth.forcedLossConfirmer.code
-    );
-  }
+  const resultConfirmer = auth?.resultConfirmer ?? noneConfirmer;
+  await insertMatchActionLog(
+    uuidv4(),
+    tournamentId,
+    matchId,
+    "result",
+    null,
+    resultConfirmer.type,
+    resultConfirmer.id,
+    resultConfirmer.name,
+    resultConfirmer.code
+  );
 }
 
 function resolveMatchOutcome(
@@ -708,6 +743,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [participants, setParticipants] = useState<TournamentPlayer[]>([]);
   const [admins, setAdmins] = useState<TournamentAdmin[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
+  const [matchActionLogs, setMatchActionLogs] = useState<MatchActionLog[]>([]);
   const [trees, setTrees] = useState<BracketTree[]>([]);
   const [roundLocks, setRoundLocks] = useState<RoundLock[]>([]);
 
@@ -828,6 +864,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setParticipants([]);
       setAdmins([]);
       setMatches([]);
+      setMatchActionLogs([]);
       setTrees([]);
       setRoundLocks([]);
       return;
@@ -835,13 +872,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const t = await getTournamentById(id);
     setTournament(t);
     if (t) {
-      const [loadedParticipants, loadedAdmins, loadedMatches, tr, rl] = await Promise.all([
+      const [loadedParticipants, loadedAdmins, loadedMatches, loadedActionLogs, tr, rl] = await Promise.all([
         getTournamentPlayers(t.id),
         getTournamentAdmins(t.id).catch((error) => {
           console.error("管理者一覧の取得に失敗しました", error);
           return [];
         }),
         getMatchesByTournament(t.id),
+        getMatchActionLogsByTournament(t.id).catch((error) => {
+          console.error("認証履歴の取得に失敗しました", error);
+          return [];
+        }),
         getBracketTrees(t.id),
         getRoundLocks(t.id),
       ]);
@@ -867,6 +908,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setParticipants(p);
       setAdmins(a);
       setMatches(m);
+      setMatchActionLogs(loadedActionLogs);
       setTrees(tr);
       setRoundLocks(rl);
     } else {
@@ -874,6 +916,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setParticipants([]);
       setAdmins([]);
       setMatches([]);
+      setMatchActionLogs([]);
       setTrees([]);
       setRoundLocks([]);
     }
@@ -983,17 +1026,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await fetchCharacters();
   }, [fetchCharacters]);
 
-  const addCharacterList = useCallback(async (name: string, characters: string[]) => {
+  const addCharacterList = useCallback(async (name: string, categoryName: string, items: string[]) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await createCharacterList(uuidv4(), trimmed, normalizeCharacterList(characters));
+    await createCharacterList(uuidv4(), trimmed, categoryName, normalizeCharacterList(items));
     await fetchCharacterLists();
   }, [fetchCharacterLists]);
 
-  const editCharacterList = useCallback(async (id: string, name: string, characters: string[]) => {
+  const editCharacterList = useCallback(async (id: string, name: string, categoryName: string, items: string[]) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await updateCharacterList(id, trimmed, normalizeCharacterList(characters));
+    await updateCharacterList(id, trimmed, categoryName, normalizeCharacterList(items));
     await fetchCharacterLists();
   }, [fetchCharacterLists]);
 
@@ -1034,7 +1077,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_list_name: string | null,
       character_list: string[],
       character_selection_config: TournamentCharacterSelectionConfig | null,
-      default_player_side: TournamentDefaultPlayerSide
+      default_player_side: TournamentDefaultPlayerSide,
+      result_auth_mode: MatchActionAuthMode,
+      dq_auth_mode: MatchActionAuthMode,
+      forced_loss_auth_mode: MatchActionAuthMode
     ) => {
       const id = uuidv4();
       const normalizedEventCode = normalizeEventCode(event_code);
@@ -1056,7 +1102,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           character_list_name,
           normalizeCharacterList(character_list)
         ),
-        default_player_side
+        default_player_side,
+        result_auth_mode,
+        dq_auth_mode,
+        forced_loss_auth_mode
       );
 
       try {
@@ -1210,7 +1259,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       const trimmed = name.trim();
       if (!trimmed) return;
+
+      const currentAdmins = await getTournamentAdmins(tournament.id);
+      const current = currentAdmins.find((a) => a.admin_id === admin_id);
+      if (!current) return;
+      const ordered = [...currentAdmins].sort((a, b) => a.admin_sequence - b.admin_sequence);
+      const fallbackSequence = ordered.findIndex((a) => a.admin_id === admin_id) + 1;
+      const sequence = current.admin_sequence > 0 ? current.admin_sequence : Math.max(1, fallbackSequence);
+
+      const generated = buildAdminCode(
+        normalizeEventCode(tournament.event_code),
+        normalizeTournamentCode(tournament.tournament_code),
+        tournament.max_participants,
+        sequence
+      );
+
       await updateTournamentAdminName(tournament.id, admin_id, trimmed);
+      await updateTournamentAdminCode(
+        tournament.id,
+        admin_id,
+        generated.adminCode,
+        sequence,
+        generated.adminId4
+      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -1264,7 +1335,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       const trimmed = name.trim();
       if (!trimmed) return;
+
+      const currentParticipants = await getTournamentPlayers(tournament.id);
+      const current = currentParticipants.find((p) => p.player_id === player_id);
+      if (!current) return;
+      const ordered = [...currentParticipants].sort((a, b) => a.seed - b.seed);
+      const fallbackSequence = ordered.findIndex((p) => p.player_id === player_id) + 1;
+      const sequence = current.player_sequence > 0 ? current.player_sequence : Math.max(1, fallbackSequence);
+
+      const generated = buildPlayerCode(
+        normalizeEventCode(tournament.event_code),
+        normalizeTournamentCode(tournament.tournament_code),
+        sequence,
+        trimmed
+      );
+
       await updateTournamentPlayerName(tournament.id, player_id, trimmed);
+      await updateTournamentPlayerCode(
+        tournament.id,
+        player_id,
+        generated.playerCode,
+        sequence,
+        generated.playerId4
+      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -1312,7 +1405,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tournament.character_list_name,
       tournament.character_list,
       tournament.character_selection_config,
-      tournament.default_player_side
+      tournament.default_player_side,
+      tournament.result_auth_mode,
+      tournament.dq_auth_mode,
+      tournament.forced_loss_auth_mode
     );
 
     await deleteMatchesByTournament(tournament.id);
@@ -1344,6 +1440,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await fetchTournament();
   }, [tournament, fetchTournament]);
 
+  const clearBracket = useCallback(async () => {
+    if (!tournament) return;
+    await deleteMatchesByTournament(tournament.id);
+    await deleteBracketTreesByTournament(tournament.id);
+    await updateTournamentStatus(tournament.id, "setup");
+    await fetchTournament();
+  }, [tournament, fetchTournament]);
+
   const setGrandFinalReset = useCallback(
     async (enabled: boolean) => {
       if (!tournament) return;
@@ -1358,7 +1462,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tournament.character_list_name,
         tournament.character_list,
         tournament.character_selection_config,
-        tournament.default_player_side
+        tournament.default_player_side,
+        tournament.result_auth_mode,
+        tournament.dq_auth_mode,
+        tournament.forced_loss_auth_mode
       );
       await fetchTournament();
     },
@@ -1376,7 +1483,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_list_name: string | null,
       character_list: string[],
       character_selection_config: TournamentCharacterSelectionConfig | null,
-      default_player_side: TournamentDefaultPlayerSide
+      default_player_side: TournamentDefaultPlayerSide,
+      result_auth_mode: MatchActionAuthMode,
+      dq_auth_mode: MatchActionAuthMode,
+      forced_loss_auth_mode: MatchActionAuthMode
     ) => {
       if (!tournament) return;
       const normalizedEventCode = normalizeEventCode(event_code);
@@ -1397,7 +1507,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           character_list_name,
           normalizeCharacterList(character_list)
         ),
-        default_player_side
+        default_player_side,
+        result_auth_mode,
+        dq_auth_mode,
+        forced_loss_auth_mode
       );
 
       if (
@@ -1639,13 +1752,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         dq_player_id
       );
 
-      await writeMatchActionLogs(
-        tournament.id,
-        match.id,
-        dq_player_ids,
-        forced_loser_id,
-        auth
-      );
+      if (match.status !== "completed" && status === "completed") {
+        await writeMatchActionLogs(
+          tournament.id,
+          match.id,
+          dq_player_ids,
+          forced_loser_id,
+          auth
+        );
+      }
 
       if (status === "completed") {
         const winnerCharacterName =
@@ -1881,13 +1996,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Update this match with the corrected result
         await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
 
-        await writeMatchActionLogs(
-          tournament.id,
-          match.id,
-          dq_player_ids,
-          forced_loser_id,
-          auth
-        );
+        if (match.status !== "completed" && newStatus === "completed") {
+          await writeMatchActionLogs(
+            tournament.id,
+            match.id,
+            dq_player_ids,
+            forced_loser_id,
+            auth
+          );
+        }
 
         // Place the new winner/loser in their downstream slots
         if (newWinnerId && match.next_match_id && match.next_match_slot) {
@@ -1932,13 +2049,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Winner unchanged — just update the scores
         await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
-        await writeMatchActionLogs(
-          tournament.id,
-          match.id,
-          dq_player_ids,
-          forced_loser_id,
-          auth
-        );
+        if (match.status !== "completed" && newStatus === "completed") {
+          await writeMatchActionLogs(
+            tournament.id,
+            match.id,
+            dq_player_ids,
+            forced_loser_id,
+            auth
+          );
+        }
       }
 
       await syncPendingMatchSides(tournament);
@@ -2306,6 +2425,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     participants,
     admins,
     matches,
+    matchActionLogs,
     trees,
     roundLocks,
     isRoundLocked,
@@ -2324,6 +2444,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     swapSeeds,
     randomizeSeeds,
     generateBracket,
+    clearBracket,
     setGrandFinalReset,
     setTournamentStatus,
     updateTournamentSettings,

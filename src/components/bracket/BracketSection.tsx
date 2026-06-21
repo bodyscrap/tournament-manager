@@ -204,7 +204,7 @@ function MatchCard({
           <span className="font-mono text-gray-500">{match.player1_wins}</span>
         )}
         {p1Win && <span>✓</span>}
-        {match.dq_player_id === match.player1_id && (
+        {match.player1_id && match.dq_player_id === match.player1_id && (
           <span className="text-red-500 text-[10px]">DQ</span>
         )}
       </div>
@@ -222,7 +222,7 @@ function MatchCard({
           <span className="font-mono text-gray-500">{match.player2_wins}</span>
         )}
         {p2Win && <span>✓</span>}
-        {match.dq_player_id === match.player2_id && (
+        {match.player2_id && match.dq_player_id === match.player2_id && (
           <span className="text-red-500 text-[10px]">DQ</span>
         )}
       </div>

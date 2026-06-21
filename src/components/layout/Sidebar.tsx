@@ -3,11 +3,10 @@ import { useAppContext } from "../../context/AppContext";
 
 const navItems = [
   { to: "/", label: "大会一覧", icon: "🏠" },
-  { to: "/character-lists", label: "使用キャラリスト", icon: "📚" },
   { to: "/tournament/setup", label: "大会管理", icon: "⚙️" },
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
-  { to: "/tournament/player-cards", label: "参加者カード", icon: "🪪" },
-  { to: "/tournament/admins", label: "管理者カード", icon: "🛡️" },
+  { to: "/character-lists", label: "アイテムリスト", icon: "📚" },
+  { to: "/tournament/users", label: "ユーザーリスト", icon: "👥" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -37,6 +36,12 @@ export function Sidebar() {
             <p className="text-xs text-white font-medium truncate">{tournament.name}</p>
             <p className={`text-xs mt-0.5 ${STATUS_COLOR[tournament.status]}`}>
               {isReadOnly ? "🔒 " : ""}{STATUS_LABEL[tournament.status]}
+            </p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              イベントID: <span className="font-mono">{tournament.event_code}</span>
+            </p>
+            <p className="text-[11px] text-gray-400">
+              大会ID: <span className="font-mono">{tournament.tournament_code}</span>
             </p>
           </div>
         )}
