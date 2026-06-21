@@ -43,6 +43,7 @@ export function TournamentUsersPage() {
   const [authenticatedAdminId, setAuthenticatedAdminId] = useState<string | null>(null);
   const [newAdminName, setNewAdminName] = useState("");
   const [savingAdmin, setSavingAdmin] = useState(false);
+  const [isUserCardAccessBlocked, setIsUserCardAccessBlocked] = useState(false);
 
   const authenticatedAdmin = useMemo(
     () => admins.find((a) => a.admin_id === authenticatedAdminId) ?? null,
@@ -100,6 +101,10 @@ export function TournamentUsersPage() {
   const selectedAdminRows = useMemo(
     () => selectedRows.filter((row) => row.role === "admin"),
     [selectedRows]
+  );
+  const cardAccessStorageKey = useMemo(
+    () => (tournament ? `tournament-user-card-access-blocked:${tournament.id}` : ""),
+    [tournament]
   );
 
   useEffect(() => {
@@ -165,6 +170,22 @@ export function TournamentUsersPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!cardAccessStorageKey) return;
+    const saved = localStorage.getItem(cardAccessStorageKey);
+    setIsUserCardAccessBlocked(saved === "1");
+  }, [cardAccessStorageKey]);
+
+  useEffect(() => {
+    if (!cardAccessStorageKey) return;
+    localStorage.setItem(cardAccessStorageKey, isUserCardAccessBlocked ? "1" : "0");
+  }, [cardAccessStorageKey, isUserCardAccessBlocked]);
+
+  useEffect(() => {
+    if (!isUserCardAccessBlocked) return;
+    setPreviewRow(null);
+  }, [isUserCardAccessBlocked]);
+
   if (!tournament) {
     return (
       <div className="p-6 max-w-4xl mx-auto">
@@ -218,6 +239,11 @@ export function TournamentUsersPage() {
   };
 
   const handleSaveSelectedCards = async () => {
+    if (isUserCardAccessBlocked) {
+      alert("ユーザーカードの閲覧/保存は禁止中です。管理者操作から解除してください。");
+      return;
+    }
+
     if (selectedRows.length === 0) {
       alert("ユーザーを選択してください。");
       return;
@@ -230,13 +256,18 @@ export function TournamentUsersPage() {
         await exportSingleCardImage(row.exportItem);
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : "IDカード画像の保存に失敗しました");
+      alert(err instanceof Error ? err.message : "ユーザーカード画像の保存に失敗しました");
     } finally {
       setSavingCards(false);
     }
   };
 
   const handleSaveSelectedSheets = async () => {
+    if (isUserCardAccessBlocked) {
+      alert("ユーザーカードの閲覧/保存は禁止中です。管理者操作から解除してください。");
+      return;
+    }
+
     if (selectedRows.length === 0) {
       alert("ユーザーを選択してください。");
       return;
@@ -252,6 +283,52 @@ export function TournamentUsersPage() {
       alert(err instanceof Error ? err.message : "印刷用画像の保存に失敗しました");
     } finally {
       setSavingSheets(false);
+    }
+  };
+
+  const handleToggleUserCardAccess = async () => {
+    if (isReadOnly || !authenticatedAdminId) return;
+
+    if (isUserCardAccessBlocked) {
+      setIsUserCardAccessBlocked(false);
+      alert("ユーザーカード閲覧/保存の禁止を解除しました。");
+      return;
+    }
+
+    if (admins.length === 0) {
+      alert("管理者が存在しないため設定できません。");
+      return;
+    }
+
+    const backupAdmin = [...admins].sort((a, b) => {
+      const aid = Number.parseInt(a.admin_id_4, 10);
+      const bid = Number.parseInt(b.admin_id_4, 10);
+      const aNum = Number.isNaN(aid) ? Number.MAX_SAFE_INTEGER : aid;
+      const bNum = Number.isNaN(bid) ? Number.MAX_SAFE_INTEGER : bid;
+      if (aNum !== bNum) return aNum - bNum;
+      return a.admin_sequence - b.admin_sequence;
+    })[0];
+
+    const confirmed = confirm(
+      `ユーザーカード閲覧/保存を禁止しますか？\n\n` +
+      `禁止前に復旧用として最小番号の管理者カード（${backupAdmin.admin_id_4}: ${backupAdmin.name}）を保存します。`
+    );
+    if (!confirmed) return;
+
+    try {
+      await exportSingleCardImage({
+        entityType: "admin",
+        id: `admin:${backupAdmin.admin_id}`,
+        name: backupAdmin.name,
+        userCode: backupAdmin.admin_code,
+        tournamentCode: tournament.tournament_code,
+        tournamentName: tournament.name,
+        qrPayload: backupAdmin.admin_code,
+      });
+      setIsUserCardAccessBlocked(true);
+      alert("復旧用管理者カードを保存し、ユーザーカード閲覧/保存を禁止しました。");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "復旧用管理者カードの保存に失敗したため、禁止設定を中止しました。");
     }
   };
 
@@ -421,8 +498,23 @@ export function TournamentUsersPage() {
             >
               管理者を削除
             </button>
+            <button
+              onClick={() => void handleToggleUserCardAccess()}
+              className={`px-3 py-2 text-sm rounded-lg text-white ${
+                isUserCardAccessBlocked
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-amber-600 hover:bg-amber-700"
+              }`}
+            >
+              {isUserCardAccessBlocked
+                ? "ユーザーカード閲覧/保存の禁止を解除"
+                : "ユーザーカード閲覧/保存を禁止"}
+            </button>
           </div>
           <p className="text-xs text-gray-500 mt-1">管理者の編集は1名選択時のみ可能です。削除は選択中の管理者のみ対象です。</p>
+          <p className={`text-xs mt-1 ${isUserCardAccessBlocked ? "text-red-700" : "text-gray-500"}`}>
+            ユーザーカード閲覧/保存: {isUserCardAccessBlocked ? "禁止中" : "許可中"}
+          </p>
         </div>
       )}
 
@@ -430,20 +522,23 @@ export function TournamentUsersPage() {
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button
             onClick={handleSaveSelectedCards}
-            disabled={savingCards || selectedRows.length === 0}
+            disabled={isUserCardAccessBlocked || savingCards || selectedRows.length === 0}
             className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-50"
           >
-            {savingCards ? "保存中..." : "画像を保存"}
+            {savingCards ? "保存中..." : "ユーザーカード画像を保存"}
           </button>
           <button
             onClick={handleSaveSelectedSheets}
-            disabled={savingSheets || selectedRows.length === 0}
+            disabled={isUserCardAccessBlocked || savingSheets || selectedRows.length === 0}
             className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50"
           >
-            {savingSheets ? "生成中..." : "印刷用画像を保存"}
+            {savingSheets ? "生成中..." : "印刷用ユーザーカード画像を保存"}
           </button>
           <span className="text-xs text-gray-500">選択中: {selectedRows.length} / {rows.length}</span>
         </div>
+        {isUserCardAccessBlocked && (
+          <p className="text-xs text-red-700 mb-2">管理者操作でユーザーカード閲覧/保存が禁止されています。解除するまで表示・保存はできません。</p>
+        )}
 
         {rows.length === 0 ? (
           <div className="p-6 text-center text-gray-500">参加者・管理者がまだ登録されていません。</div>
@@ -452,10 +547,10 @@ export function TournamentUsersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left border-b border-gray-200 text-gray-600">
-                  <th className="px-3 py-2 w-36">ID</th>
-                  <th className="px-3 py-2">ユーザー名</th>
+                  <th className="px-3 py-2 w-24">ID</th>
+                  <th className="px-3 py-2 w-64">ユーザー名</th>
                   <th className="px-3 py-2 w-32">属性</th>
-                  <th className="px-3 py-2 w-24">操作</th>
+                  <th className="px-3 py-2 w-40">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -503,11 +598,16 @@ export function TournamentUsersPage() {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (isUserCardAccessBlocked) {
+                              alert("ユーザーカードの閲覧/保存は禁止中です。管理者操作から解除してください。");
+                              return;
+                            }
                             setPreviewRow(row);
                           }}
-                          className="text-xs px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white"
+                          disabled={isUserCardAccessBlocked}
+                          className="text-xs px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white whitespace-nowrap"
                         >
-                          IDカード
+                          ユーザーカード
                         </button>
                       </td>
                     </tr>
@@ -519,7 +619,7 @@ export function TournamentUsersPage() {
         )}
       </div>
 
-      {previewRow && (
+      {previewRow && !isUserCardAccessBlocked && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-xl p-4">
             <div className="flex items-start justify-between gap-2">
