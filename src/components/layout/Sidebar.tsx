@@ -37,6 +37,12 @@ export function Sidebar() {
             <p className={`text-xs mt-0.5 ${STATUS_COLOR[tournament.status]}`}>
               {isReadOnly ? "🔒 " : ""}{STATUS_LABEL[tournament.status]}
             </p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              イベントID: <span className="font-mono">{tournament.event_code}</span>
+            </p>
+            <p className="text-[11px] text-gray-400">
+              大会ID: <span className="font-mono">{tournament.tournament_code}</span>
+            </p>
           </div>
         )}
       </div>
