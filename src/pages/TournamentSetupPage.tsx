@@ -1236,12 +1236,6 @@ export function TournamentSetupPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate("/tournament/users")}
-            className="text-xs px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg"
-          >
-            👥 ユーザーリスト
-          </button>
           {tournament.status === "setup" && !isReadOnly && (
             <button onClick={handleOpenSettings} className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg">
               ⚙️ 設定を編集
@@ -1270,7 +1264,7 @@ export function TournamentSetupPage() {
             onClick={() => { if (confirm("大会データをすべて削除しますか？")) removeTournament(); }}
             className="text-xs px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg"
           >
-            削除
+            この大会を削除
           </button>
         </div>
       </div>
