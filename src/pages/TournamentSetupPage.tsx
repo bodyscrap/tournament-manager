@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import type {
   CharacterInputMode,
+  MatchActionAuthMode,
   TournamentCharacterSelectionConfig,
   TournamentDefaultPlayerSide,
 } from "../lib/types";
@@ -19,6 +20,84 @@ type CharacterCategoryDraft = {
   maxSelect: number;
   forbidDuplicateItem: boolean;
 };
+
+type CreateFormDefaults = {
+  type: "single_elimination" | "double_elimination";
+  maxParticipants: number;
+  grandFinalReset: boolean;
+  defaultPlayerSide: TournamentDefaultPlayerSide;
+  resultAuthMode: MatchActionAuthMode;
+  dqAuthMode: MatchActionAuthMode;
+  forcedLossAuthMode: MatchActionAuthMode;
+};
+
+const CREATE_FORM_DEFAULTS_STORAGE_KEY = "tournament.create.defaults.v1";
+
+const FALLBACK_CREATE_FORM_DEFAULTS: CreateFormDefaults = {
+  type: "double_elimination",
+  maxParticipants: 8,
+  grandFinalReset: true,
+  defaultPlayerSide: "upper_1p",
+  resultAuthMode: "none",
+  dqAuthMode: "target_player",
+  forcedLossAuthMode: "admin",
+};
+
+function loadCreateFormDefaults(): CreateFormDefaults {
+  try {
+    const raw = window.localStorage.getItem(CREATE_FORM_DEFAULTS_STORAGE_KEY);
+    if (!raw) return FALLBACK_CREATE_FORM_DEFAULTS;
+    const parsed = JSON.parse(raw) as Partial<CreateFormDefaults>;
+    return {
+      type: parsed.type === "single_elimination" || parsed.type === "double_elimination"
+        ? parsed.type
+        : FALLBACK_CREATE_FORM_DEFAULTS.type,
+      maxParticipants: Math.min(256, Math.max(2, Math.floor(parsed.maxParticipants ?? FALLBACK_CREATE_FORM_DEFAULTS.maxParticipants))),
+      grandFinalReset: typeof parsed.grandFinalReset === "boolean"
+        ? parsed.grandFinalReset
+        : FALLBACK_CREATE_FORM_DEFAULTS.grandFinalReset,
+      defaultPlayerSide:
+        parsed.defaultPlayerSide === "upper_1p" ||
+        parsed.defaultPlayerSide === "upper_2p" ||
+        parsed.defaultPlayerSide === "random"
+          ? parsed.defaultPlayerSide
+          : FALLBACK_CREATE_FORM_DEFAULTS.defaultPlayerSide,
+      resultAuthMode:
+        parsed.resultAuthMode === "none" ||
+        parsed.resultAuthMode === "admin" ||
+        parsed.resultAuthMode === "match_participant" ||
+        parsed.resultAuthMode === "both_players" ||
+        parsed.resultAuthMode === "winner" ||
+        parsed.resultAuthMode === "loser"
+          ? parsed.resultAuthMode
+          : FALLBACK_CREATE_FORM_DEFAULTS.resultAuthMode,
+      dqAuthMode:
+        parsed.dqAuthMode === "admin" ||
+        parsed.dqAuthMode === "auth" ||
+        parsed.dqAuthMode === "target_player" ||
+        parsed.dqAuthMode === "admin_or_participant"
+          ? (parsed.dqAuthMode === "admin_or_participant" ? "target_player" : parsed.dqAuthMode)
+          : FALLBACK_CREATE_FORM_DEFAULTS.dqAuthMode,
+      forcedLossAuthMode:
+        parsed.forcedLossAuthMode === "admin" ||
+        parsed.forcedLossAuthMode === "auth" ||
+        parsed.forcedLossAuthMode === "target_player" ||
+        parsed.forcedLossAuthMode === "admin_or_participant"
+          ? (parsed.forcedLossAuthMode === "admin_or_participant" ? "target_player" : parsed.forcedLossAuthMode)
+          : FALLBACK_CREATE_FORM_DEFAULTS.forcedLossAuthMode,
+    };
+  } catch {
+    return FALLBACK_CREATE_FORM_DEFAULTS;
+  }
+}
+
+function saveCreateFormDefaults(defaults: CreateFormDefaults) {
+  try {
+    window.localStorage.setItem(CREATE_FORM_DEFAULTS_STORAGE_KEY, JSON.stringify(defaults));
+  } catch {
+    // ignore storage errors (private mode / quota)
+  }
+}
 
 function createCategoryDraft(index: number): CharacterCategoryDraft {
   return {
@@ -91,6 +170,29 @@ function getDefaultPlayerSideLabel(value: TournamentDefaultPlayerSide): string {
   }
 }
 
+function getAuthModeLabel(value: MatchActionAuthMode): string {
+  switch (value) {
+    case "none":
+      return "認証なし";
+    case "auth":
+      return "認証";
+    case "target_player":
+      return "当該プレイヤー";
+    case "admin":
+      return "管理者";
+    case "match_participant":
+      return "対戦プレイヤー";
+    case "both_players":
+      return "両プレイヤー";
+    case "winner":
+      return "勝者";
+    case "loser":
+      return "敗者";
+    default:
+      return "当該プレイヤー";
+  }
+}
+
 export function TournamentSetupPage() {
   const {
     tournament,
@@ -119,15 +221,20 @@ export function TournamentSetupPage() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const [createInitialDefaults] = useState<CreateFormDefaults>(loadCreateFormDefaults);
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
   const [createEventCode, setCreateEventCode] = useState("00");
   const [createTournamentCode, setCreateTournamentCode] = useState("0000");
-  const [type, setType] = useState<"single_elimination" | "double_elimination">("double_elimination");
-  const [maxP, setMaxP] = useState(8);
-  const [gfReset, setGfReset] = useState(true);
-  const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
+  const [type, setType] = useState<"single_elimination" | "double_elimination">(createInitialDefaults.type);
+  const [maxP, setMaxP] = useState(createInitialDefaults.maxParticipants);
+  const [gfReset, setGfReset] = useState(createInitialDefaults.grandFinalReset);
+  const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>(createInitialDefaults.defaultPlayerSide);
+  const [createResultAuthMode, setCreateResultAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.resultAuthMode);
+  const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.dqAuthMode);
+  const [createForcedLossAuthMode, setCreateForcedLossAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.forcedLossAuthMode);
+  const [saveCreateDefaultsOnCreate, setSaveCreateDefaultsOnCreate] = useState(false);
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
   const [createCategoryCount, setCreateCategoryCount] = useState(1);
   const [createCategoryDrafts, setCreateCategoryDrafts] = useState<CharacterCategoryDraft[]>([
@@ -146,6 +253,9 @@ export function TournamentSetupPage() {
   const [editMaxP, setEditMaxP] = useState(256);
   const [editGfReset, setEditGfReset] = useState(true);
   const [editDefaultPlayerSide, setEditDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
+  const [editResultAuthMode, setEditResultAuthMode] = useState<MatchActionAuthMode>("none");
+  const [editDqAuthMode, setEditDqAuthMode] = useState<MatchActionAuthMode>("target_player");
+  const [editForcedLossAuthMode, setEditForcedLossAuthMode] = useState<MatchActionAuthMode>("admin");
   const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
   const [editCategoryCount, setEditCategoryCount] = useState(1);
   const [editCategoryDrafts, setEditCategoryDrafts] = useState<CharacterCategoryDraft[]>([
@@ -388,8 +498,22 @@ export function TournamentSetupPage() {
         characterListName,
         characterList,
         selectionConfig,
-        createDefaultPlayerSide
+        createDefaultPlayerSide,
+        createResultAuthMode,
+        createDqAuthMode,
+        createForcedLossAuthMode
       );
+      if (saveCreateDefaultsOnCreate) {
+        saveCreateFormDefaults({
+          type,
+          maxParticipants: maxP,
+          grandFinalReset: gfReset,
+          defaultPlayerSide: createDefaultPlayerSide,
+          resultAuthMode: createResultAuthMode,
+          dqAuthMode: createDqAuthMode,
+          forcedLossAuthMode: createForcedLossAuthMode,
+        });
+      }
     } finally {
       setCreating(false);
     }
@@ -403,6 +527,17 @@ export function TournamentSetupPage() {
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
     setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
+    setEditResultAuthMode(tournament.result_auth_mode ?? "none");
+    setEditDqAuthMode(
+      tournament.dq_auth_mode === "admin_or_participant"
+        ? "target_player"
+        : (tournament.dq_auth_mode ?? "target_player")
+    );
+    setEditForcedLossAuthMode(
+      tournament.forced_loss_auth_mode === "admin_or_participant"
+        ? "target_player"
+        : (tournament.forced_loss_auth_mode ?? "admin")
+    );
     setEditCharacterMode(tournament.character_input_mode);
     const config = tournament.character_selection_config;
     const categories = config?.categories?.length
@@ -462,7 +597,10 @@ export function TournamentSetupPage() {
         characterListName,
         characterList,
         selectionConfig,
-        editDefaultPlayerSide
+        editDefaultPlayerSide,
+        editResultAuthMode,
+        editDqAuthMode,
+        editForcedLossAuthMode
       );
       setEditSettings(false);
     } finally {
@@ -741,6 +879,57 @@ export function TournamentSetupPage() {
             </select>
           </div>
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">通常結果入力時の認証</label>
+            <select
+              value={createResultAuthMode}
+              onChange={(e) => setCreateResultAuthMode(e.target.value as MatchActionAuthMode)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="none">認証なし</option>
+              <option value="admin">管理者</option>
+              <option value="match_participant">対戦プレイヤー</option>
+              <option value="both_players">両プレイヤー</option>
+              <option value="winner">勝者</option>
+              <option value="loser">敗者</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
+            <select
+              value={createDqAuthMode}
+              onChange={(e) => setCreateDqAuthMode(e.target.value as MatchActionAuthMode)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="auth">認証</option>
+              <option value="target_player">当該プレイヤー</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">強制敗北時の認証</label>
+            <select
+              value={createForcedLossAuthMode}
+              onChange={(e) => setCreateForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="auth">認証</option>
+              <option value="target_player">当該プレイヤー</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={saveCreateDefaultsOnCreate}
+              onChange={(e) => setSaveCreateDefaultsOnCreate(e.target.checked)}
+              className="h-4 w-4 text-blue-600"
+            />
+            ここまでの設定をデフォルトとして保存
+          </label>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            次回の初期値として保存: トーナメント形式、参加上限、グランドファイナルリセット、デフォルトプレイヤーサイド、通常結果入力時の認証、DQ時の認証、強制敗北時の認証。保存しない: 大会名、イベントコード、大会コード、使用キャラ設定。
+          </p>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
             <select
               value={createCharacterMode}
@@ -991,6 +1180,15 @@ export function TournamentSetupPage() {
             デフォルトプレイヤーサイド: {getDefaultPlayerSideLabel(tournament.default_player_side ?? "upper_1p")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
+            通常結果入力時の認証: {getAuthModeLabel(tournament.result_auth_mode ?? "none")}
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
+            DQ時の認証: {getAuthModeLabel(tournament.dq_auth_mode === "admin_or_participant" ? "target_player" : (tournament.dq_auth_mode ?? "target_player"))}
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
+            強制敗北時の認証: {getAuthModeLabel(tournament.forced_loss_auth_mode ?? "admin")}
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
             イベントコード: <span className="font-mono">{normalizeEventCode(tournament.event_code ?? "00")}</span>
           </p>
           <p className="text-sm text-gray-500 mt-1">
@@ -1125,6 +1323,45 @@ export function TournamentSetupPage() {
                 <option value="upper_1p">トーナメント表で上が1P(デフォルト)</option>
                 <option value="upper_2p">トーナメント表で上が2P</option>
                 <option value="random">ランダム</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">通常結果入力時の認証</label>
+              <select
+                value={editResultAuthMode}
+                onChange={(e) => setEditResultAuthMode(e.target.value as MatchActionAuthMode)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="none">認証なし</option>
+                <option value="admin">管理者</option>
+                <option value="match_participant">対戦プレイヤー</option>
+                <option value="both_players">両プレイヤー</option>
+                <option value="winner">勝者</option>
+                <option value="loser">敗者</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
+              <select
+                value={editDqAuthMode}
+                onChange={(e) => setEditDqAuthMode(e.target.value as MatchActionAuthMode)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="auth">認証</option>
+                <option value="target_player">当該プレイヤー</option>
+                <option value="admin">管理者</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">強制敗北時の認証</label>
+              <select
+                value={editForcedLossAuthMode}
+                onChange={(e) => setEditForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="auth">認証</option>
+                <option value="target_player">当該プレイヤー</option>
+                <option value="admin">管理者</option>
               </select>
             </div>
             <div>
