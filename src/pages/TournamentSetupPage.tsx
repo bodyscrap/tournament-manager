@@ -96,6 +96,10 @@ function getAuthModeLabel(value: MatchActionAuthMode): string {
   switch (value) {
     case "none":
       return "認証なし";
+    case "auth":
+      return "認証";
+    case "target_player":
+      return "当該プレイヤー";
     case "admin":
       return "管理者";
     case "match_participant":
@@ -107,7 +111,7 @@ function getAuthModeLabel(value: MatchActionAuthMode): string {
     case "loser":
       return "敗者";
     default:
-      return "管理者or本人";
+      return "当該プレイヤー";
   }
 }
 
@@ -149,7 +153,7 @@ export function TournamentSetupPage() {
   const [gfReset, setGfReset] = useState(true);
   const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [createResultAuthMode, setCreateResultAuthMode] = useState<MatchActionAuthMode>("none");
-  const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>("admin_or_participant");
+  const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>("target_player");
   const [createForcedLossAuthMode, setCreateForcedLossAuthMode] = useState<MatchActionAuthMode>("admin");
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
   const [createCategoryCount, setCreateCategoryCount] = useState(1);
@@ -170,7 +174,7 @@ export function TournamentSetupPage() {
   const [editGfReset, setEditGfReset] = useState(true);
   const [editDefaultPlayerSide, setEditDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [editResultAuthMode, setEditResultAuthMode] = useState<MatchActionAuthMode>("none");
-  const [editDqAuthMode, setEditDqAuthMode] = useState<MatchActionAuthMode>("admin_or_participant");
+  const [editDqAuthMode, setEditDqAuthMode] = useState<MatchActionAuthMode>("target_player");
   const [editForcedLossAuthMode, setEditForcedLossAuthMode] = useState<MatchActionAuthMode>("admin");
   const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
   const [editCategoryCount, setEditCategoryCount] = useState(1);
@@ -433,8 +437,16 @@ export function TournamentSetupPage() {
     setEditGfReset(tournament.grand_final_reset);
     setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
     setEditResultAuthMode(tournament.result_auth_mode ?? "none");
-    setEditDqAuthMode(tournament.dq_auth_mode ?? "admin_or_participant");
-    setEditForcedLossAuthMode(tournament.forced_loss_auth_mode ?? "admin");
+    setEditDqAuthMode(
+      tournament.dq_auth_mode === "admin_or_participant"
+        ? "target_player"
+        : (tournament.dq_auth_mode ?? "target_player")
+    );
+    setEditForcedLossAuthMode(
+      tournament.forced_loss_auth_mode === "admin_or_participant"
+        ? "target_player"
+        : (tournament.forced_loss_auth_mode ?? "admin")
+    );
     setEditCharacterMode(tournament.character_input_mode);
     const config = tournament.character_selection_config;
     const categories = config?.categories?.length
@@ -797,9 +809,9 @@ export function TournamentSetupPage() {
               onChange={(e) => setCreateDqAuthMode(e.target.value as MatchActionAuthMode)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="none">認証なし</option>
+              <option value="auth">認証</option>
+              <option value="target_player">当該プレイヤー</option>
               <option value="admin">管理者</option>
-              <option value="admin_or_participant">管理者or本人</option>
             </select>
           </div>
           <div>
@@ -809,9 +821,9 @@ export function TournamentSetupPage() {
               onChange={(e) => setCreateForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="none">認証なし</option>
+              <option value="auth">認証</option>
+              <option value="target_player">当該プレイヤー</option>
               <option value="admin">管理者</option>
-              <option value="admin_or_participant">管理者or本人</option>
             </select>
           </div>
           <div>
@@ -1068,7 +1080,7 @@ export function TournamentSetupPage() {
             通常結果入力時の認証: {getAuthModeLabel(tournament.result_auth_mode ?? "none")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
-            DQ時の認証: {getAuthModeLabel(tournament.dq_auth_mode ?? "admin_or_participant")}
+            DQ時の認証: {getAuthModeLabel(tournament.dq_auth_mode === "admin_or_participant" ? "target_player" : (tournament.dq_auth_mode ?? "target_player"))}
           </p>
           <p className="text-sm text-gray-500 mt-1">
             強制敗北時の認証: {getAuthModeLabel(tournament.forced_loss_auth_mode ?? "admin")}
@@ -1232,9 +1244,9 @@ export function TournamentSetupPage() {
                 onChange={(e) => setEditDqAuthMode(e.target.value as MatchActionAuthMode)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="none">認証なし</option>
+                <option value="auth">認証</option>
+                <option value="target_player">当該プレイヤー</option>
                 <option value="admin">管理者</option>
-                <option value="admin_or_participant">管理者or本人</option>
               </select>
             </div>
             <div>
@@ -1244,9 +1256,9 @@ export function TournamentSetupPage() {
                 onChange={(e) => setEditForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="none">認証なし</option>
+                <option value="auth">認証</option>
+                <option value="target_player">当該プレイヤー</option>
                 <option value="admin">管理者</option>
-                <option value="admin_or_participant">管理者or本人</option>
               </select>
             </div>
             <div>

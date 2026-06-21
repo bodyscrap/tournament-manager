@@ -322,7 +322,7 @@ export function BracketPage() {
     });
 
     const resultAuthMode = tournament?.result_auth_mode ?? "none";
-    const dqAuthMode = tournament?.dq_auth_mode ?? "admin_or_participant";
+    const dqAuthMode = tournament?.dq_auth_mode ?? "target_player";
     const forcedLossAuthMode = tournament?.forced_loss_auth_mode ?? "admin";
     const requiresForcedAuth = !!forcedLoser && forcedLossAuthMode !== "none";
     const requiresDqAuth = dqPlayerIds.length > 0 && !hasByeDq && dqAuthMode !== "none" && !requiresForcedAuth;
@@ -373,7 +373,13 @@ export function BracketPage() {
           throw new Error("DQ確定には認証済み管理者が必要です");
         }
         dqConfirmer = adminConfirmer;
+      } else if (dqAuthMode === "auth") {
+        dqConfirmer = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
+        if (!dqConfirmer) {
+          throw new Error("DQ確定には認証が必要です");
+        }
       } else {
+        // target_player / legacy admin_or_participant
         dqConfirmer = adminConfirmer ?? targetParticipantConfirmer ?? null;
         if (!dqConfirmer) {
           throw new Error("DQ確定には対象プレイヤーまたは管理者の認証が必要です");
@@ -388,7 +394,13 @@ export function BracketPage() {
           throw new Error("強制敗北の確定には認証済み管理者が必要です");
         }
         forcedConfirmer = adminConfirmer;
+      } else if (forcedLossAuthMode === "auth") {
+        forcedConfirmer = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
+        if (!forcedConfirmer) {
+          throw new Error("強制敗北の確定には認証が必要です");
+        }
       } else {
+        // target_player / legacy admin_or_participant
         forcedConfirmer = adminConfirmer ?? targetParticipantConfirmer ?? null;
         if (!forcedConfirmer) {
           throw new Error("強制敗北の確定には対象プレイヤーまたは管理者の認証が必要です");
@@ -407,7 +419,10 @@ export function BracketPage() {
       const winnerConfirmer = winnerId ? getParticipantConfirmer(winnerId) : null;
       const loserConfirmer = loserId ? getParticipantConfirmer(loserId) : null;
 
-      if (resultAuthMode === "admin") {
+      // 管理者認証はどの方式でも常に許可
+      if (adminConfirmer) {
+        resultConfirmer = adminConfirmer;
+      } else if (resultAuthMode === "admin") {
         if (!adminConfirmer) {
           throw new Error("結果確定には認証済み管理者が必要です");
         }
@@ -1506,17 +1521,17 @@ export function BracketPage() {
                     <div>
                       <label className="text-xs text-gray-600 block mb-1">
                         {forcedLoserId
-                          ? tournament.forced_loss_auth_mode === "none"
-                            ? "確認コード (強制敗北あり: 認証不要)"
-                            : tournament.forced_loss_auth_mode === "admin"
-                            ? "確認コード (強制敗北あり: 管理者)"
-                            : "確認コード (強制敗北あり: 管理者 or 本人)"
+                                          ? tournament.forced_loss_auth_mode === "admin"
+                                            ? "確認コード (強制敗北あり: 管理者)"
+                                            : tournament.forced_loss_auth_mode === "auth"
+                                            ? "確認コード (強制敗北あり: 認証)"
+                                            : "確認コード (強制敗北あり: 当該プレイヤー)"
                           : p1Dq || p2Dq
-                          ? tournament.dq_auth_mode === "none"
-                          ? "確認コード (DQ: 認証不要)"
-                          : tournament.dq_auth_mode === "admin"
-                          ? "確認コード (DQ: 管理者)"
-                          : "確認コード (DQ: 対象本人 or 管理者)"
+                                          ? tournament.dq_auth_mode === "admin"
+                                            ? "確認コード (DQ: 管理者)"
+                                            : tournament.dq_auth_mode === "auth"
+                                            ? "確認コード (DQ: 認証)"
+                                            : "確認コード (DQ: 当該プレイヤー)"
                             : tournament.result_auth_mode === "none"
                           ? "確認コード (通常結果入力: 認証不要)"
                           : tournament.result_auth_mode === "admin"

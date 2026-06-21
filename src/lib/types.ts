@@ -73,6 +73,8 @@ export type CharacterInputMode = "free_input" | "list_selection";
 export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
 export type MatchActionAuthMode =
   | "none"
+  | "auth"
+  | "target_player"
   | "admin"
   | "admin_or_participant"
   | "match_participant"

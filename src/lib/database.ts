@@ -121,7 +121,7 @@ async function initSchema(db: Database): Promise<void> {
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
       default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
       result_auth_mode   TEXT NOT NULL DEFAULT 'none',
-      dq_auth_mode       TEXT NOT NULL DEFAULT 'admin_or_participant',
+      dq_auth_mode       TEXT NOT NULL DEFAULT 'target_player',
       forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin',
       character_list_json TEXT,
       character_selection_config_json TEXT,
@@ -208,7 +208,7 @@ async function initSchema(db: Database): Promise<void> {
     await db.execute(`ALTER TABLE tournament ADD COLUMN result_auth_mode TEXT NOT NULL DEFAULT 'none'`);
   } catch { /* exists */ }
   try {
-    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'admin_or_participant'`);
+    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'target_player'`);
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin'`);
@@ -490,8 +490,12 @@ function rowToTournament(row: TournamentRow): Tournament {
     character_selection_config: normalizedConfig,
     default_player_side: row.default_player_side ?? "upper_1p",
     result_auth_mode: (row.result_auth_mode ?? "none") as MatchActionAuthMode,
-    dq_auth_mode: (row.dq_auth_mode ?? "admin_or_participant") as MatchActionAuthMode,
-    forced_loss_auth_mode: (row.forced_loss_auth_mode ?? "admin") as MatchActionAuthMode,
+    dq_auth_mode: ((row.dq_auth_mode ?? "target_player") === "admin_or_participant"
+      ? "target_player"
+      : (row.dq_auth_mode ?? "target_player")) as MatchActionAuthMode,
+    forced_loss_auth_mode: ((row.forced_loss_auth_mode ?? "admin") === "admin_or_participant"
+      ? "target_player"
+      : (row.forced_loss_auth_mode ?? "admin")) as MatchActionAuthMode,
     created_at: row.created_at,
   };
 }
