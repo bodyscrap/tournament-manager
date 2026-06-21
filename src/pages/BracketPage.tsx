@@ -554,6 +554,13 @@ export function BracketPage() {
       alert("プレイヤーがいないスロットには強制敗北を適用できません");
       return;
     }
+
+    // 既に同じプレイヤーが強制敗北設定済みの場合はキャンセル（トグル）
+    if (forcedLoserId === loserId) {
+      setForcedLoserId(null);
+      return;
+    }
+
     const winnerId = loserSlot === 1 ? selectedMatch.player2_id : selectedMatch.player1_id;
     const loserName = loserId ? (playerMap.get(loserId)?.name ?? loserId) : "不明";
     const winnerName = winnerId ? (playerMap.get(winnerId)?.name ?? winnerId) : "不明";
@@ -1199,7 +1206,7 @@ export function BracketPage() {
                         <button
                           onClick={() => applyForcedLoss(1)}
                           disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
-                          className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${forcedLoserId === selectedMatch.player1_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
                         >強制敗北</button>
                         <button
                           onClick={() => {
@@ -1247,7 +1254,7 @@ export function BracketPage() {
                         <button
                           onClick={() => applyForcedLoss(2)}
                           disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
-                          className="text-xs px-2 py-1 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-40"
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${forcedLoserId === selectedMatch.player2_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
                         >強制敗北</button>
                         <button
                           onClick={() => {
