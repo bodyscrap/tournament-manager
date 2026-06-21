@@ -214,6 +214,7 @@ export function TournamentSetupPage() {
     swapSeeds,
     randomizeSeeds,
     generateBracket,
+    clearBracket,
     updateTournamentSettings,
     finalizeTournament,
     trees,
@@ -747,6 +748,44 @@ export function TournamentSetupPage() {
     const changed = await randomizeSeeds();
     setSeedRandomizeNotice(changed ? "changed" : "unchanged");
     setSwapFrom(null);
+  };
+
+  const handleRemoveParticipant = async (playerId: string) => {
+    if (!tournament) return;
+    const target = participants.find((p) => p.player_id === playerId);
+    if (!target) return;
+
+    const hasBracket =
+      tournament.status !== "setup" ||
+      matches.length > 0 ||
+      trees.length > 0;
+
+    if (!hasBracket) {
+      const ok = confirm(`参加者「${target.name}」を削除しますか？`);
+      if (!ok) return;
+      try {
+        await removeParticipant(playerId);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "参加者の削除に失敗しました");
+      }
+      return;
+    }
+
+    const ok = confirm(
+      `ブラケット作成後に参加者「${target.name}」を削除しようとしています。\n\n` +
+      `このまま削除すると、既存のブラケットはすべて削除されます。\n` +
+      `参加者確定後にブラケットを再生成してください。\n\n` +
+      `それでも削除しますか？`
+    );
+    if (!ok) return;
+
+    try {
+      await removeParticipant(playerId);
+      await clearBracket();
+      alert("参加者を削除し、既存ブラケットを削除しました。参加者確定後に「🏆 ブラケットを生成」から作り直してください。");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "参加者削除またはブラケット削除に失敗しました");
+    }
   };
 
   const handleCreateUsedCharacterList = async () => {
@@ -1713,7 +1752,10 @@ export function TournamentSetupPage() {
                         編集
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); removeParticipant(tp.player_id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleRemoveParticipant(tp.player_id);
+                        }}
                         className="text-red-400 hover:text-red-600 text-xs ml-1"
                       >
                         ✕

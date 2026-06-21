@@ -195,6 +195,7 @@ interface AppContextValue {
   swapSeeds: (player_id_a: string, player_id_b: string) => Promise<void>;
   randomizeSeeds: () => Promise<boolean>;
   generateBracket: () => Promise<void>;
+  clearBracket: () => Promise<void>;
   setGrandFinalReset: (enabled: boolean) => Promise<void>;
   setTournamentStatus: (status: TournamentStatus) => Promise<void>;
   updateTournamentSettings: (
@@ -1439,6 +1440,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await fetchTournament();
   }, [tournament, fetchTournament]);
 
+  const clearBracket = useCallback(async () => {
+    if (!tournament) return;
+    await deleteMatchesByTournament(tournament.id);
+    await deleteBracketTreesByTournament(tournament.id);
+    await updateTournamentStatus(tournament.id, "setup");
+    await fetchTournament();
+  }, [tournament, fetchTournament]);
+
   const setGrandFinalReset = useCallback(
     async (enabled: boolean) => {
       if (!tournament) return;
@@ -2435,6 +2444,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     swapSeeds,
     randomizeSeeds,
     generateBracket,
+    clearBracket,
     setGrandFinalReset,
     setTournamentStatus,
     updateTournamentSettings,
