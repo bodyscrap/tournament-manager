@@ -71,6 +71,14 @@ export type TournamentType = "single_elimination" | "double_elimination";
 export type TournamentStatus = "setup" | "in_progress" | "completed" | "finalized";
 export type CharacterInputMode = "free_input" | "list_selection";
 export type TournamentDefaultPlayerSide = "upper_1p" | "upper_2p" | "random";
+export type MatchActionAuthMode =
+  | "none"
+  | "admin"
+  | "admin_or_participant"
+  | "match_participant"
+  | "both_players"
+  | "winner"
+  | "loser";
 
 export interface Tournament {
   id: string;
@@ -86,6 +94,9 @@ export interface Tournament {
   character_list: string[];
   character_selection_config: TournamentCharacterSelectionConfig | null;
   default_player_side: TournamentDefaultPlayerSide;
+  result_auth_mode: MatchActionAuthMode;
+  dq_auth_mode: MatchActionAuthMode;
+  forced_loss_auth_mode: MatchActionAuthMode;
   created_at: string;
 }
 
@@ -103,6 +114,9 @@ export interface TournamentRow {
   character_list_json: string | null;
   character_selection_config_json: string | null;
   default_player_side: TournamentDefaultPlayerSide;
+  result_auth_mode: MatchActionAuthMode | null;
+  dq_auth_mode: MatchActionAuthMode | null;
+  forced_loss_auth_mode: MatchActionAuthMode | null;
   created_at: string;
 }
 
@@ -162,8 +176,8 @@ export interface TournamentAdminRow {
   created_at: string;
 }
 
-export type MatchActionType = "dq" | "forced_loss";
-export type MatchActionConfirmerType = "participant" | "admin";
+export type MatchActionType = "result" | "dq" | "forced_loss";
+export type MatchActionConfirmerType = "none" | "participant" | "admin";
 
 export interface MatchActionLog {
   id: string;

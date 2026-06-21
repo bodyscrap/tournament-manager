@@ -16,6 +16,7 @@ import type {
   MatchActionLogRow,
   MatchActionType,
   MatchActionConfirmerType,
+  MatchActionAuthMode,
   Match,
   MatchRow,
   BracketTree,
@@ -119,6 +120,9 @@ async function initSchema(db: Database): Promise<void> {
       grand_final_reset  INTEGER NOT NULL DEFAULT 1,
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
       default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
+      result_auth_mode   TEXT NOT NULL DEFAULT 'none',
+      dq_auth_mode       TEXT NOT NULL DEFAULT 'admin_or_participant',
+      forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin',
       character_list_json TEXT,
       character_selection_config_json TEXT,
       created_at         TEXT NOT NULL
@@ -199,6 +203,15 @@ async function initSchema(db: Database): Promise<void> {
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN default_player_side TEXT NOT NULL DEFAULT 'upper_1p'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN result_auth_mode TEXT NOT NULL DEFAULT 'none'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'admin_or_participant'`);
+  } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament ADD COLUMN forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin'`);
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_list_name TEXT`);
@@ -476,6 +489,9 @@ function rowToTournament(row: TournamentRow): Tournament {
     character_list: flattenedCharacterList,
     character_selection_config: normalizedConfig,
     default_player_side: row.default_player_side ?? "upper_1p",
+    result_auth_mode: (row.result_auth_mode ?? "none") as MatchActionAuthMode,
+    dq_auth_mode: (row.dq_auth_mode ?? "admin_or_participant") as MatchActionAuthMode,
+    forced_loss_auth_mode: (row.forced_loss_auth_mode ?? "admin") as MatchActionAuthMode,
     created_at: row.created_at,
   };
 }
@@ -527,7 +543,10 @@ export async function createTournament(
   character_list_name: string | null,
   character_list: string[],
   character_selection_config: TournamentCharacterSelectionConfig | null,
-  default_player_side: TournamentDefaultPlayerSide
+  default_player_side: TournamentDefaultPlayerSide,
+  result_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode,
+  forced_loss_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -545,8 +564,8 @@ export async function createTournament(
     : null;
   const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
-    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, character_list_name, character_list_json, character_selection_config_json, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13)`,
+    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, result_auth_mode, dq_auth_mode, forced_loss_auth_mode, character_list_name, character_list_json, character_selection_config_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       id,
       name,
@@ -557,6 +576,9 @@ export async function createTournament(
       grand_final_reset ? 1 : 0,
       character_input_mode,
       default_player_side,
+      result_auth_mode,
+      dq_auth_mode,
+      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,
@@ -595,7 +617,10 @@ export async function updateTournamentSettings(
   character_list_name: string | null,
   character_list: string[],
   character_selection_config: TournamentCharacterSelectionConfig | null,
-  default_player_side: TournamentDefaultPlayerSide
+  default_player_side: TournamentDefaultPlayerSide,
+  result_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode,
+  forced_loss_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -621,10 +646,13 @@ export async function updateTournamentSettings(
          grand_final_reset = $5,
          character_input_mode = $6,
          default_player_side = $7,
-         character_list_name = $8,
-         character_list_json = $9,
-         character_selection_config_json = $10
-     WHERE id = $11`,
+         result_auth_mode = $8,
+         dq_auth_mode = $9,
+         forced_loss_auth_mode = $10,
+         character_list_name = $11,
+         character_list_json = $12,
+         character_selection_config_json = $13
+       WHERE id = $14`,
     [
       type,
       event_code,
@@ -633,6 +661,9 @@ export async function updateTournamentSettings(
       grand_final_reset ? 1 : 0,
       character_input_mode,
       default_player_side,
+      result_auth_mode,
+      dq_auth_mode,
+      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,
