@@ -1,6 +1,6 @@
 import type { Match, TournamentPlayer } from "./types";
 
-export interface PlayerRanking {
+interface PlayerRanking {
   player_id: string;
   name: string;
   seed: number;
