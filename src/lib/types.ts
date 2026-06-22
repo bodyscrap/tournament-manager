@@ -301,9 +301,3 @@ export interface MatchRow {
   loser_next_match_slot: number | null;
 }
 
-// =====================
-// UI helpers
-// =====================
-export interface PlayerWithSeed extends Player {
-  seed: number;
-}

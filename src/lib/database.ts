@@ -564,14 +564,6 @@ export async function getTournamentById(id: string): Promise<Tournament | null> 
   return rows.length > 0 ? rowToTournament(rows[0]) : null;
 }
 
-export async function getTournament(): Promise<Tournament | null> {
-  const db = await getDb();
-  const rows = await db.select<TournamentRow[]>(
-    "SELECT * FROM tournament ORDER BY created_at DESC LIMIT 1"
-  );
-  return rows.length > 0 ? rowToTournament(rows[0]) : null;
-}
-
 export async function createTournament(
   id: string,
   event_code: string,
@@ -634,17 +626,6 @@ export async function updateTournamentStatus(
 ): Promise<void> {
   const db = await getDb();
   await db.execute(`UPDATE tournament SET status = $1 WHERE id = $2`, [status, id]);
-}
-
-export async function updateGrandFinalReset(
-  id: string,
-  grand_final_reset: boolean
-): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `UPDATE tournament SET grand_final_reset = $1 WHERE id = $2`,
-    [grand_final_reset ? 1 : 0, id]
-  );
 }
 
 export async function updateTournamentSettings(
@@ -964,18 +945,6 @@ export async function getMatchActionLogsByTournament(tournament_id: string): Pro
   return rows.map(rowToMatchActionLog);
 }
 
-export async function updateTournamentParticipantDq(
-  tournament_id: string,
-  player_id: string,
-  dq: boolean
-): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `UPDATE tournament_players SET dq = $1 WHERE tournament_id = $2 AND player_id = $3`,
-    [dq ? 1 : 0, tournament_id, player_id]
-  );
-}
-
 export async function removeTournamentPlayer(
   tournament_id: string,
   player_id: string
@@ -1072,30 +1041,6 @@ export async function getMatchesByTournament(
   const rows = await db.select<MatchRow[]>(
     "SELECT * FROM matches WHERE tournament_id = $1 ORDER BY bracket, round, position",
     [tournament_id]
-  );
-  return rows.map(rowToMatch);
-}
-
-export async function getMatchById(id: string): Promise<Match | null> {
-  const db = await getDb();
-  const rows = await db.select<MatchRow[]>(
-    "SELECT * FROM matches WHERE id = $1",
-    [id]
-  );
-  return rows.length > 0 ? rowToMatch(rows[0]) : null;
-}
-
-export async function getMatchesByPlayer(
-  tournament_id: string,
-  player_id: string
-): Promise<Match[]> {
-  const db = await getDb();
-  const rows = await db.select<MatchRow[]>(
-    `SELECT * FROM matches
-     WHERE tournament_id = $1
-       AND (player1_id = $2 OR player2_id = $2)
-     ORDER BY round ASC`,
-    [tournament_id, player_id]
   );
   return rows.map(rowToMatch);
 }

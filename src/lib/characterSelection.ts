@@ -101,28 +101,3 @@ export function normalizeCharacterSelectionConfig(
     total_max_select: totalMax,
   };
 }
-
-export function flattenCharacterOptions(
-  config: TournamentCharacterSelectionConfig | null | undefined,
-  fallbackList: string[] = []
-): string[] {
-  const unique = new Set<string>();
-
-  if (config?.categories?.length) {
-    for (const category of config.categories) {
-      for (const raw of category.list) {
-        const name = raw.trim();
-        if (name) unique.add(name);
-      }
-    }
-  }
-
-  if (unique.size === 0) {
-    for (const raw of fallbackList) {
-      const name = raw.trim();
-      if (name) unique.add(name);
-    }
-  }
-
-  return [...unique];
-}

@@ -63,6 +63,7 @@ import {
   updateTournamentPlayerName,
   updateMatchCharacters,
   updateMatchSides,
+  updateTournamentPlayerSelectedCharacters,
 } from "../lib/database";
 import {
   buildAdminCode,
@@ -1319,8 +1320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setParticipantSelectedCharacters = useCallback(
     async (player_id: string, selected_characters: Record<string, string[]>) => {
       if (!tournament) return;
-      const db_module = await import("../lib/database");
-      await db_module.updateTournamentPlayerSelectedCharacters(
+      await updateTournamentPlayerSelectedCharacters(
         tournament.id,
         player_id,
         selected_characters
