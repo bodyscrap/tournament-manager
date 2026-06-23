@@ -66,7 +66,7 @@ function MessageCard({ entry }: { entry: ReceivedMessageEntry | SentMessageEntry
             <p className="font-semibold text-gray-900 truncate">{message.title}</p>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            送信元: <span className="font-mono">{message.sourceTournamentId}</span>
+            送信元: <span className="font-mono">{message.eventId}-{message.sourceTournamentId}</span>
             {" "}({message.sourceTournamentName})
           </p>
           {message.targetTournamentIds && message.targetTournamentIds.length > 0 && (
