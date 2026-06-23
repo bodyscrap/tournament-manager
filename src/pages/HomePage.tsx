@@ -23,13 +23,17 @@ function StatusBadge({ status }: { status: Tournament["status"] }) {
 function TournamentCard({
   t,
   isActive,
+  isPinned,
   onClick,
+  onTogglePin,
   onDelete,
   deleting,
 }: {
   t: Tournament;
   isActive: boolean;
+  isPinned: boolean;
   onClick: () => void;
+  onTogglePin: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -61,9 +65,26 @@ function TournamentCard({
           </div>
           <StatusBadge status={t.status} />
         </div>
-        {isActive && (
-          <p className="mt-2 text-xs text-blue-600 font-medium">▶ 選択中</p>
-        )}
+        <div className="mt-2 flex items-center gap-2">
+          {isActive && (
+            <p className="text-xs text-blue-600 font-medium">▶ 選択中</p>
+          )}
+          {isPinned && (
+            <p className="text-xs text-amber-600 font-medium">📌 ピン留め中</p>
+          )}
+        </div>
+      </button>
+
+      <button
+        onClick={onTogglePin}
+        disabled={deleting || t.status === "finalized"}
+        className={`absolute bottom-3 right-3 px-2.5 py-1 text-xs font-medium rounded-md disabled:opacity-60 ${
+          isPinned
+            ? "bg-amber-100 hover:bg-amber-200 text-amber-700"
+            : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+        }`}
+      >
+        {isPinned ? "ピン留め解除" : "この大会をピン留めする"}
       </button>
 
       <button
@@ -79,7 +100,14 @@ function TournamentCard({
 
 // ── Main page ─────────────────────────────────────────────────────
 export function HomePage() {
-  const { tournamentList, tournament, selectTournament, removeTournament } = useAppContext();
+  const {
+    tournamentList,
+    tournament,
+    pinnedTournament,
+    setPinnedTournament,
+    selectTournament,
+    removeTournament,
+  } = useAppContext();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -106,6 +134,14 @@ export function HomePage() {
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleTogglePin = async (t: Tournament) => {
+    if (t.id === pinnedTournament?.id) {
+      await setPinnedTournament(null);
+      return;
+    }
+    await setPinnedTournament(t.id);
   };
 
   return (
@@ -138,7 +174,9 @@ export function HomePage() {
               key={t.id}
               t={t}
               isActive={t.id === tournament?.id}
+              isPinned={t.id === pinnedTournament?.id}
               onClick={() => handleSelect(t)}
+              onTogglePin={() => handleTogglePin(t)}
               onDelete={() => handleDeleteTournament(t)}
               deleting={deletingId === t.id}
             />

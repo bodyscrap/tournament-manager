@@ -152,6 +152,7 @@ interface AppContextValue {
   // Tournament list
   tournamentList: Tournament[];
   pinnedTournament: Tournament | null;
+  setPinnedTournament: (id: string | null) => Promise<void>;
   isReadOnly: boolean;
   selectTournament: (id: string | null) => Promise<void>;
   finalizeTournament: () => Promise<void>;
@@ -1065,6 +1066,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [loadTournamentData]
   );
+
+  const setPinnedTournament = useCallback(async (id: string | null) => {
+    if (id === null) {
+      setPinnedTournamentId(null);
+      localStorage.removeItem("pinnedTournamentId");
+      return;
+    }
+
+    const target = tournamentList.find((t) => t.id === id);
+    if (!target) {
+      throw new Error("指定された大会が見つかりません");
+    }
+    if (target.status === "finalized") {
+      throw new Error("結果確定済みの大会はピン留めできません");
+    }
+
+    setPinnedTournamentId(id);
+    localStorage.setItem("pinnedTournamentId", id);
+  }, [tournamentList]);
 
   const finalizeTournament = useCallback(async () => {
     if (!tournament) return;
@@ -2447,6 +2467,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getPlayer,
     tournamentList,
     pinnedTournament,
+    setPinnedTournament,
     isReadOnly,
     selectTournament,
     finalizeTournament,
