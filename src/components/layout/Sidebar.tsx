@@ -7,6 +7,7 @@ const navItems = [
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
   { to: "/character-lists", label: "アイテムリスト", icon: "📚" },
   { to: "/tournament/users", label: "ユーザーリスト", icon: "👥" },
+  { to: "/notification", label: "通知システム", icon: "📢" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -24,7 +25,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function Sidebar() {
-  const { tournament, isReadOnly } = useAppContext();
+  const { tournament, pinnedTournament, isReadOnly, selectTournament } = useAppContext();
 
   return (
     <aside className="w-56 shrink-0 bg-gray-900 text-white flex flex-col min-h-screen">
@@ -44,6 +45,18 @@ export function Sidebar() {
               大会ID: <span className="font-mono">{tournament.tournament_code}</span>
             </p>
           </div>
+        )}
+        {pinnedTournament && (
+          <button
+            onClick={() => selectTournament(pinnedTournament.id)}
+            className="mt-3 w-full px-2 py-2 bg-indigo-950/70 rounded-lg text-left hover:bg-indigo-900 transition-colors"
+          >
+            <p className="text-xs text-indigo-300 font-medium">📌 ピン留め中の大会</p>
+            <p className="text-xs text-white font-medium truncate mt-1">{pinnedTournament.name}</p>
+            <p className="text-[11px] text-indigo-200 mt-0.5">
+              {pinnedTournament.status === "in_progress" ? "進行中" : pinnedTournament.status === "completed" ? "完了 (未確定)" : "結果確定済"}
+            </p>
+          </button>
         )}
       </div>
       <nav className="flex-1 px-2 py-4 space-y-1">

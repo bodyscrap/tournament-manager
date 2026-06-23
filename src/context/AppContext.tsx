@@ -151,6 +151,7 @@ interface AppContextValue {
 
   // Tournament list
   tournamentList: Tournament[];
+  pinnedTournament: Tournament | null;
   isReadOnly: boolean;
   selectTournament: (id: string | null) => Promise<void>;
   finalizeTournament: () => Promise<void>;
@@ -747,6 +748,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [matchActionLogs, setMatchActionLogs] = useState<MatchActionLog[]>([]);
   const [trees, setTrees] = useState<BracketTree[]>([]);
   const [roundLocks, setRoundLocks] = useState<RoundLock[]>([]);
+  const [pinnedTournamentId, setPinnedTournamentId] = useState<string | null>(null);
 
   // Ref to track active tournament id (avoids stale closure in callbacks)
   const activeTournamentIdRef = useRef<string | null>(null);
@@ -938,6 +940,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const init = async () => {
       const savedId = localStorage.getItem("activeTournamentId");
+      const savedPinnedId = localStorage.getItem("pinnedTournamentId");
       const [playerData, tList] = await Promise.all([
         getAllPlayers(),
         getAllTournaments(),
@@ -946,11 +949,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setTournamentList(tList);
       setCharacters(await getCharacterMasters());
       setCharacterLists(await getCharacterLists());
+      setPinnedTournamentId(savedPinnedId && tList.some((t) => t.id === savedPinnedId) ? savedPinnedId : null);
 
       // Restore saved active tournament, or pick the most recent non-finalized
       let activeId: string | null = null;
       if (savedId && tList.some((t) => t.id === savedId)) {
         activeId = savedId;
+      } else if (savedPinnedId && tList.some((t) => t.id === savedPinnedId)) {
+        activeId = savedPinnedId;
       } else if (tList.length > 0) {
         const nonFinal = tList.filter((t) => t.status !== "finalized");
         activeId = (nonFinal[0] ?? tList[0])?.id ?? null;
@@ -1063,8 +1069,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const finalizeTournament = useCallback(async () => {
     if (!tournament) return;
     await updateTournamentStatus(tournament.id, "finalized");
+    if (pinnedTournamentId === tournament.id) {
+      setPinnedTournamentId(null);
+      localStorage.removeItem("pinnedTournamentId");
+    }
     await fetchTournament();
-  }, [tournament, fetchTournament]);
+  }, [tournament, fetchTournament, pinnedTournamentId]);
 
   const createNew = useCallback(
     async (
@@ -1136,6 +1146,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!targetId) return;
 
     const removingActive = activeTournamentIdRef.current === targetId;
+    const removingPinned = pinnedTournamentId === targetId;
     await deleteTournament(targetId);
 
     if (removingActive) {
@@ -1143,10 +1154,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("activeTournamentId");
       await loadTournamentData(null);
     }
+    if (removingPinned) {
+      setPinnedTournamentId(null);
+      localStorage.removeItem("pinnedTournamentId");
+    }
 
     const list = await getAllTournaments();
     setTournamentList(list);
-  }, [loadTournamentData]);
+  }, [loadTournamentData, pinnedTournamentId]);
 
   const isRoundLocked = useCallback(
     (tree_id: string, bracket: MatchBracket, round: number) =>
@@ -1437,6 +1452,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     await syncPendingMatchSides(tournament);
     await updateTournamentStatus(tournament.id, "in_progress");
+    setPinnedTournamentId(tournament.id);
+    localStorage.setItem("pinnedTournamentId", tournament.id);
     await fetchTournament();
   }, [tournament, fetchTournament]);
 
@@ -1444,7 +1461,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!tournament) return;
     await deleteMatchesByTournament(tournament.id);
     await deleteBracketTreesByTournament(tournament.id);
-    await updateTournamentStatus(tournament.id, "setup");
     await fetchTournament();
   }, [tournament, fetchTournament]);
 
@@ -1569,9 +1585,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (status: TournamentStatus) => {
       if (!tournament) return;
       await updateTournamentStatus(tournament.id, status);
+      if (status === "in_progress") {
+        setPinnedTournamentId(tournament.id);
+        localStorage.setItem("pinnedTournamentId", tournament.id);
+      }
+      if (status === "finalized" && pinnedTournamentId === tournament.id) {
+        setPinnedTournamentId(null);
+        localStorage.removeItem("pinnedTournamentId");
+      }
       await fetchTournament();
     },
-    [tournament, fetchTournament]
+    [tournament, fetchTournament, pinnedTournamentId]
   );
 
   // ---- Match mutations ----
@@ -2397,6 +2421,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [tournament]
   );
 
+  const pinnedTournament = pinnedTournamentId
+    ? tournamentList.find((t) => t.id === pinnedTournamentId) ?? null
+    : null;
+
   const isReadOnly = tournament?.status === "finalized";
 
   const value: AppContextValue = {
@@ -2418,6 +2446,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     removePlayer,
     getPlayer,
     tournamentList,
+    pinnedTournament,
     isReadOnly,
     selectTournament,
     finalizeTournament,
