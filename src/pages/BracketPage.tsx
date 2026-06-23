@@ -820,6 +820,13 @@ export function BracketPage() {
     navigate(`/tournament/setup?editParticipantId=${encodeURIComponent(playerId)}`);
   };
 
+  const openCallMessageForPlayer = (playerId: string | null) => {
+    if (!playerId || playerId.startsWith("dummy-")) return;
+    setDetailPlayerId(null);
+    closeModal();
+    navigate(`/notification?compose=call&playerId=${encodeURIComponent(playerId)}`);
+  };
+
   const renderParticipantDetailDialog = () => {
     if (!detailPlayerId || !tournament?.character_selection_config) return null;
 
@@ -841,12 +848,20 @@ export function BracketPage() {
                 参加者No. {target.seed} / {target.name}
               </p>
             </div>
-            <button
-              onClick={() => setDetailPlayerId(null)}
-              className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
-            >
-              閉じる
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => openCallMessageForPlayer(target.player_id)}
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                呼び出し
+              </button>
+              <button
+                onClick={() => setDetailPlayerId(null)}
+                className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
+              >
+                閉じる
+              </button>
+            </div>
           </div>
 
           <p className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1 mb-3">

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
 import type { ReceivedMessageEntry, SentMessageEntry } from "../hooks/useMessageNotification";
@@ -95,6 +96,9 @@ function NewMessageDialog({
   eventCode,
   tournamentCode,
   tournamentStatus,
+  initialKind,
+  initialSelectedPlayerId,
+  initialComment,
   onSend,
   onClose,
 }: {
@@ -103,6 +107,9 @@ function NewMessageDialog({
   eventCode: string;
   tournamentCode: string;
   tournamentStatus: "setup" | "in_progress" | "completed" | "finalized";
+  initialKind?: ComposeKind;
+  initialSelectedPlayerId?: string;
+  initialComment?: string;
   onSend: (input: {
     attribute: MessageAttribute;
     title: string;
@@ -116,14 +123,31 @@ function NewMessageDialog({
   }) => Promise<void>;
   onClose: () => void;
 }) {
-  const [kind, setKind] = useState<ComposeKind>("CALL");
-  const [selectedPlayerId, setSelectedPlayerId] = useState(playerOptions[0]?.playerId ?? "");
+  const initialPlayerId =
+    initialSelectedPlayerId && playerOptions.some((p) => p.playerId === initialSelectedPlayerId)
+      ? initialSelectedPlayerId
+      : playerOptions[0]?.playerId ?? "";
+
+  const [kind, setKind] = useState<ComposeKind>(initialKind ?? "CALL");
+  const [selectedPlayerId, setSelectedPlayerId] = useState(initialPlayerId);
   const [targetTournamentIdsInput, setTargetTournamentIdsInput] = useState("");
-  const [comment, setComment] = useState("");
+  const [comment, setComment] = useState(initialComment ?? "");
   const [generalTitle, setGeneralTitle] = useState("");
   const [requestedTournamentId, setRequestedTournamentId] = useState(tournamentCode);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (selectedPlayerId) {
+      if (!playerOptions.some((p) => p.playerId === selectedPlayerId)) {
+        setSelectedPlayerId(playerOptions[0]?.playerId ?? "");
+      }
+      return;
+    }
+    if (playerOptions.length > 0) {
+      setSelectedPlayerId(playerOptions[0].playerId);
+    }
+  }, [playerOptions, selectedPlayerId]);
 
   const selectedPlayer = playerOptions.find((p) => p.playerId === selectedPlayerId) ?? null;
 
@@ -355,11 +379,18 @@ function NewMessageDialog({
 }
 
 export function NotificationPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { tournament, participants } = useAppContext();
   const { receivedMessages, sentMessages, sendMessage } = useMessageNotification();
 
   const [tab, setTab] = useState<Tab>("received");
   const [showCompose, setShowCompose] = useState(false);
+  const [composePreset, setComposePreset] = useState<{
+    kind?: ComposeKind;
+    selectedPlayerId?: string;
+    comment?: string;
+  } | null>(null);
 
   const playerOptions = useMemo<PlayerOption[]>(() => {
     return [...participants]
@@ -371,6 +402,19 @@ export function NotificationPage() {
         userCode: p.player_code,
       }));
   }, [participants]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("compose") !== "call") return;
+
+    setComposePreset({
+      kind: "CALL",
+      selectedPlayerId: params.get("playerId") ?? undefined,
+      comment: params.get("comment") ?? undefined,
+    });
+    setShowCompose(true);
+    navigate("/notification", { replace: true });
+  }, [location.search, navigate]);
 
   if (!tournament) {
     return (
@@ -391,7 +435,10 @@ export function NotificationPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowCompose(true)}
+          onClick={() => {
+            setComposePreset(null);
+            setShowCompose(true);
+          }}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
         >
           + メッセージを作成
@@ -446,8 +493,14 @@ export function NotificationPage() {
           eventCode={tournament.event_code}
           tournamentCode={tournament.tournament_code}
           tournamentStatus={tournament.status}
+          initialKind={composePreset?.kind}
+          initialSelectedPlayerId={composePreset?.selectedPlayerId}
+          initialComment={composePreset?.comment}
           onSend={sendMessage}
-          onClose={() => setShowCompose(false)}
+          onClose={() => {
+            setShowCompose(false);
+            setComposePreset(null);
+          }}
         />
       )}
     </div>
