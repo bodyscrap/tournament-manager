@@ -456,7 +456,7 @@ async function ensureParticipantCodes(
     const needsSequence = !participant.player_sequence || participant.player_sequence <= 0;
     const nextSequence = needsSequence ? i + 1 : participant.player_sequence;
     const needsPlayerId4 = !/^\d{4}$/.test(participant.player_id_4 ?? "");
-    const needsCode = !isValidPlayerCode(participant.player_code ?? "");
+    const needsCode = !isValidPlayerCode(participant.player_code ?? "", normalizedEventCode);
 
     if (!needsSequence && !needsPlayerId4 && !needsCode) continue;
 
@@ -500,7 +500,7 @@ async function ensureAdminCodes(
     const admin = ordered[i];
     const sequence = admin.admin_sequence > 0 ? admin.admin_sequence : i + 1;
     const needsId4 = !/^\d{4}$/.test(admin.admin_id_4 ?? "");
-    const needsCode = !isValidAdminCode(admin.admin_code ?? "");
+    const needsCode = !isValidAdminCode(admin.admin_code ?? "", normalizedEventCode);
     if (!needsId4 && !needsCode) continue;
 
     const generated = buildAdminCode(

@@ -3,7 +3,7 @@ import { useAppContext } from "../context/AppContext";
 import { SafeQRCode } from "../components/common/SafeQRCode";
 import { QrScannerDialog } from "../components/common/QrScannerDialog";
 import { exportA4SheetImages, exportSingleCardImage, type ExportCardItem } from "../lib/cardExport";
-import { extractUserCode } from "../lib/playerCode";
+import { extractUserCode, normalizeEventCode } from "../lib/playerCode";
 
 type UserRole = "participant" | "admin";
 
@@ -108,6 +108,7 @@ export function TournamentUsersPage() {
     () => (tournament ? `tournament-user-card-access-blocked:${tournament.id}` : ""),
     [tournament]
   );
+  const currentEventCode = normalizeEventCode(tournament?.event_code ?? "0000");
 
   useEffect(() => {
     setSelectedRowIds((prev) => {
@@ -337,7 +338,7 @@ export function TournamentUsersPage() {
 
   const resolveAdminByCode = (raw: string) => {
     const normalized = extractUserCode(raw);
-    if (!normalized) return null;
+    if (!normalized || !normalized.startsWith(currentEventCode)) return null;
     return admins.find((a) => extractUserCode(a.admin_code) === normalized) ?? null;
   };
 

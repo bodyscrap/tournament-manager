@@ -226,7 +226,7 @@ export function TournamentSetupPage() {
 
   // --- 新規作成フォーム用 ---
   const [name, setName] = useState("");
-  const [createEventCode, setCreateEventCode] = useState("00");
+  const [createEventCode, setCreateEventCode] = useState("0000");
   const [createTournamentCode, setCreateTournamentCode] = useState("0000");
   const [type, setType] = useState<"single_elimination" | "double_elimination">(createInitialDefaults.type);
   const [maxP, setMaxP] = useState(createInitialDefaults.maxParticipants);
@@ -248,7 +248,7 @@ export function TournamentSetupPage() {
 
   // --- 設定編集 (setup フェーズ) ---
   const [editSettings, setEditSettings] = useState(false);
-  const [editEventCode, setEditEventCode] = useState("00");
+  const [editEventCode, setEditEventCode] = useState("0000");
   const [editTournamentCode, setEditTournamentCode] = useState("0000");
   const [editType, setEditType] = useState<"single_elimination" | "double_elimination">("single_elimination");
   const [editMaxP, setEditMaxP] = useState(256);
@@ -382,8 +382,8 @@ export function TournamentSetupPage() {
   };
 
   const generateRandomEventCode = () => {
-    const value = Math.floor(Math.random() * 100);
-    return value.toString().padStart(2, "0");
+    const value = Math.floor(Math.random() * 10000);
+    return value.toString().padStart(4, "0");
   };
 
   const collectUsedCharacters = (): string[] => {
@@ -523,7 +523,7 @@ export function TournamentSetupPage() {
   const handleOpenSettings = () => {
     if (!tournament) return;
     setEditType(tournament.type);
-    setEditEventCode(tournament.event_code ?? "00");
+    setEditEventCode(normalizeEventCode(tournament.event_code ?? "0000"));
     setEditTournamentCode(tournament.tournament_code ?? "0000");
     setEditMaxP(tournament.max_participants);
     setEditGfReset(tournament.grand_final_reset);
@@ -824,15 +824,15 @@ export function TournamentSetupPage() {
         <h2 className="text-2xl font-bold text-gray-800 mb-6">新規大会作成</h2>
         <div className="bg-white rounded-xl shadow p-6 border border-gray-200 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (2桁)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (4桁)</label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 inputMode="numeric"
-                maxLength={2}
+                maxLength={4}
                 value={createEventCode}
-                onChange={(e) => setCreateEventCode(e.target.value.replace(/\D/g, "").slice(0, 2))}
-                placeholder="例: 01"
+                onChange={(e) => setCreateEventCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="例: 0001"
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
@@ -843,7 +843,7 @@ export function TournamentSetupPage() {
                 ランダム決定
               </button>
             </div>
-            <p className="text-xs text-gray-500 mt-1">先頭ゼロを保持して 2 桁で扱います。</p>
+            <p className="text-xs text-gray-500 mt-1">先頭ゼロを保持して 4 桁で扱います。</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">大会コード (4桁)</label>
@@ -1229,7 +1229,7 @@ export function TournamentSetupPage() {
             強制敗北時の認証: {getAuthModeLabel(tournament.forced_loss_auth_mode ?? "admin")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
-            イベントコード: <span className="font-mono">{normalizeEventCode(tournament.event_code ?? "00")}</span>
+            イベントコード: <span className="font-mono">{normalizeEventCode(tournament.event_code ?? "0000")}</span>
           </p>
           <p className="text-sm text-gray-500 mt-1">
             大会コード: <span className="font-mono">{normalizeTournamentCode(tournament.tournament_code ?? "0000")}</span>
@@ -1275,15 +1275,15 @@ export function TournamentSetupPage() {
           <h3 className="font-semibold text-gray-700 mb-4">大会設定の編集</h3>
           <div className="space-y-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (2桁)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">イベントコード (4桁)</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   inputMode="numeric"
-                  maxLength={2}
+                  maxLength={4}
                   value={editEventCode}
-                  onChange={(e) => setEditEventCode(e.target.value.replace(/\D/g, "").slice(0, 2))}
-                  placeholder="例: 01"
+                  onChange={(e) => setEditEventCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="例: 0001"
                   className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button

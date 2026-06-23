@@ -6,7 +6,7 @@ import { QrScannerDialog } from "../components/common/QrScannerDialog";
 import type { DragState } from "../components/bracket/BracketSection";
 import type { Match, TournamentPlayer, MatchBracket, MatchActionConfirmerType } from "../lib/types";
 import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../lib/matchState";
-import { extractUserCode } from "../lib/playerCode";
+import { extractUserCode, normalizeEventCode } from "../lib/playerCode";
 
 type SearchUiState = "all" | "ready" | "undecided" | "in_progress" | "completed";
 
@@ -130,9 +130,11 @@ export function BracketPage() {
     return `${name} (本人)`;
   };
 
+  const currentEventCode = normalizeEventCode(tournament?.event_code ?? "0000");
+
   const findByCode = (code: string): ScannedCodeInfo | null => {
     const normalized = extractUserCode(code);
-    if (!normalized) return null;
+    if (!normalized || !normalized.startsWith(currentEventCode)) return null;
 
     const participant = participants.find((p) => extractUserCode(p.player_code) === normalized);
     if (participant) {
@@ -158,7 +160,7 @@ export function BracketPage() {
 
   const resolveSearchPlayerIdByCode = (raw: string): string | null => {
     const normalized = extractUserCode(raw);
-    if (!normalized) return null;
+    if (!normalized || !normalized.startsWith(currentEventCode)) return null;
     return participants.find((p) => extractUserCode(p.player_code) === normalized)?.player_id ?? null;
   };
 

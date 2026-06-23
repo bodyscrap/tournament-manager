@@ -114,7 +114,7 @@ async function initSchema(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS tournament (
       id                 TEXT PRIMARY KEY,
-      event_code         TEXT NOT NULL DEFAULT '00',
+      event_code         TEXT NOT NULL DEFAULT '0000',
       tournament_code    TEXT NOT NULL DEFAULT '0000',
       type               TEXT NOT NULL,
       max_participants   INTEGER NOT NULL DEFAULT 256,
@@ -225,8 +225,9 @@ async function initSchema(db: Database): Promise<void> {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_selection_config_json TEXT`);
   } catch { /* exists */ }
   try {
-    await db.execute(`ALTER TABLE tournament ADD COLUMN event_code TEXT NOT NULL DEFAULT '00'`);
+    await db.execute(`ALTER TABLE tournament ADD COLUMN event_code TEXT NOT NULL DEFAULT '0000'`);
   } catch { /* exists */ }
+  await db.execute(`UPDATE tournament SET event_code = printf('%04d', CAST(event_code AS INTEGER)) WHERE event_code IS NOT NULL AND length(event_code) < 4`);
 
   // Migration: extend character_lists to item-list schema (name + category_name)
   let characterListsNeedsRebuild = false;
@@ -515,7 +516,7 @@ function rowToTournament(row: TournamentRow): Tournament {
   return {
     id: row.id,
     name: row.name,
-    event_code: row.event_code ?? "00",
+    event_code: row.event_code ?? "0000",
     tournament_code: row.tournament_code ?? "0000",
     type: row.type,
     max_participants: row.max_participants,

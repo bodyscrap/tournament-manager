@@ -1,4 +1,5 @@
 export interface GeneratedPlayerCode {
+  eventCode4: string;
   playerId4: string;
   randomCode6: string;
   checksumAdjustCode4: string;
@@ -11,6 +12,7 @@ export interface GeneratedPlayerCode {
 }
 
 export interface GeneratedAdminCode {
+  eventCode4: string;
   adminSequence: number;
   adminId4: string;
   randomCode6: string;
@@ -50,6 +52,11 @@ function findCodeCandidate(text: string): string {
   return "";
 }
 
+function hasExpectedEventPrefix(code: string, eventCode4?: string): boolean {
+  if (!eventCode4) return true;
+  return code.startsWith(normalizeEventCode(eventCode4));
+}
+
 export function extractUserCode(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -73,17 +80,17 @@ export function extractUserCode(value: string): string {
   return findCodeCandidate(trimmed);
 }
 
-export function isValidPlayerCode(value: string): boolean {
+export function isValidPlayerCode(value: string, eventCode4?: string): boolean {
   const code = extractUserCode(value);
   if (!/^\d+$/.test(code)) return false;
-  if (code.length < 24) return false;
-  const suffixLength = code.length - 18;
-  return suffixLength >= 6 && (suffixLength - 4 >= 2 || suffixLength - 8 >= 2);
+  if (code.length !== 32) return false;
+  return hasExpectedEventPrefix(code, eventCode4);
 }
 
-export function isValidAdminCode(value: string): boolean {
+export function isValidAdminCode(value: string, eventCode4?: string): boolean {
   const code = extractUserCode(value);
-  return /^\d{18}$/.test(code);
+  if (!/^\d{22}$/.test(code)) return false;
+  return hasExpectedEventPrefix(code, eventCode4);
 }
 
 function randomDigits(length: number): string {
@@ -129,7 +136,7 @@ function findAdjustmentCode(basePrefix: string, targetPlayerId4: string): string
 
 export function normalizeEventCode(value: string): string {
   const digitsOnly = (value ?? "").replace(/\D/g, "");
-  return digitsOnly.padStart(2, "0").slice(-2);
+  return digitsOnly.padStart(4, "0").slice(-4);
 }
 
 export function normalizeTournamentCode(value: string): string {
@@ -163,11 +170,12 @@ function buildPlayerNameCode(playerName: string): string {
 }
 
 export function buildPlayerCode(
-  _eventCode2: string,
+  eventCode4: string,
   tournamentCode4: string,
   playerSequence: number,
   playerName: string
 ): GeneratedPlayerCode {
+  const normalizedEventCode = normalizeEventCode(eventCode4);
   const normalizedTournamentCode = normalizeTournamentCode(tournamentCode4);
   const playerId4 = padNumber(playerSequence, 4).slice(-4);
   const randomCode6 = randomDigits(6);
@@ -180,9 +188,10 @@ export function buildPlayerCode(
   const userCode2 = randomDigits(2);
   const shiftCode2 = randomDigits(2);
   const playerNameCode = buildPlayerNameCode(playerName);
-  const playerCode = userCode2 + shiftCode2 + shiftedBaseCode + playerNameCode;
+  const playerCode = normalizedEventCode + userCode2 + shiftCode2 + shiftedBaseCode + playerNameCode;
 
   return {
+    eventCode4: normalizedEventCode,
     playerId4,
     randomCode6,
     checksumAdjustCode4,
@@ -196,11 +205,12 @@ export function buildPlayerCode(
 }
 
 export function buildAdminCode(
-  _eventCode2: string,
+  eventCode4: string,
   tournamentCode4: string,
   maxParticipants: number,
   adminSequence: number
 ): GeneratedAdminCode {
+  const normalizedEventCode = normalizeEventCode(eventCode4);
   const normalizedTournamentCode = normalizeTournamentCode(tournamentCode4);
   const adminNumericId = maxParticipants + adminSequence;
   const adminId4 = padNumber(adminNumericId, 4).slice(-4);
@@ -211,9 +221,10 @@ export function buildAdminCode(
   const shiftedBaseCode = rotateRight(baseCode, randomCode6.length);
   const userCode2 = randomDigits(2);
   const shiftCode2 = randomDigits(2);
-  const adminCode = userCode2 + shiftCode2 + shiftedBaseCode;
+  const adminCode = normalizedEventCode + userCode2 + shiftCode2 + shiftedBaseCode;
 
   return {
+    eventCode4: normalizedEventCode,
     adminSequence,
     adminId4,
     randomCode6,
