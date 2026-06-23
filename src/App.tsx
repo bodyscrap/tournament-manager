@@ -8,6 +8,7 @@ import { TournamentSetupPage } from "./pages/TournamentSetupPage";
 import { BracketPage } from "./pages/BracketPage";
 import { TournamentUsersPage } from "./pages/TournamentUsersPage";
 import { NotificationPage } from "./pages/NotificationPage";
+import { MessageNotificationProvider } from "./hooks/useMessageNotification";
 
 function AppShell() {
   const { initialized } = useAppContext();
@@ -47,7 +48,9 @@ function App() {
   return (
     <BrowserRouter>
       <AppProvider>
-        <AppShell />
+        <MessageNotificationProvider>
+          <AppShell />
+        </MessageNotificationProvider>
       </AppProvider>
     </BrowserRouter>
   );

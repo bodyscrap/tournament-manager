@@ -1,4 +1,13 @@
-import { useEffect, useRef, useReducer, useCallback } from "react";
+import {
+  createElement,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useReducer,
+  useRef,
+  type ReactNode,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -68,11 +77,29 @@ const initialState: NotificationState = {
   sentMessages: [],
 };
 
+type MessageNotificationContextValue = {
+  receivedMessages: ReceivedMessageEntry[];
+  sentMessages: SentMessageEntry[];
+  sendMessage: (input: {
+    attribute: MessageAttribute;
+    title: string;
+    body: string;
+    comment?: string;
+    targetTournamentIds?: string[];
+    targetPlayerId?: string;
+    targetPlayerName?: string;
+    targetUserCode?: string;
+    requestedTournamentId?: string;
+  }) => Promise<void>;
+};
+
+const MessageNotificationContext = createContext<MessageNotificationContextValue | null>(null);
+
 // ─────────────────────────────────────────
 // Hook
 // ─────────────────────────────────────────
 
-export function useMessageNotification() {
+export function MessageNotificationProvider({ children }: { children: ReactNode }) {
   const { tournament } = useAppContext();
   const [state, dispatch] = useReducer(reducer, initialState);
 
@@ -172,7 +199,7 @@ export function useMessageNotification() {
     return () => {
       unlisten?.();
     };
-  }, [tournament]);
+  }, [tournament, shouldAcceptByDestination, maybeSendTournamentIdCheckResult]);
 
   // ── メッセージ送信 ──────────────────
   const sendMessage = useCallback(
@@ -214,9 +241,28 @@ export function useMessageNotification() {
     [tournament, broadcast]
   );
 
+  return createElement(
+    MessageNotificationContext.Provider,
+    {
+      value: {
+        receivedMessages: state.receivedMessages,
+        sentMessages: state.sentMessages,
+        sendMessage,
+      },
+    },
+    children
+  );
+}
+
+export function useMessageNotification() {
+  const context = useContext(MessageNotificationContext);
+  if (!context) {
+    throw new Error("useMessageNotification must be used within MessageNotificationProvider");
+  }
+
   return {
-    receivedMessages: state.receivedMessages,
-    sentMessages: state.sentMessages,
-    sendMessage,
+    receivedMessages: context.receivedMessages,
+    sentMessages: context.sentMessages,
+    sendMessage: context.sendMessage,
   };
 }
