@@ -210,6 +210,61 @@ export interface MatchActionLogRow {
 }
 
 // =====================
+// Tournament Messages
+// =====================
+export type TournamentMessageDirection = "sent" | "received";
+
+export interface TournamentMessageRecord {
+  id: string;
+  tournament_id: string;
+  event_code: string;
+  source_tournament_id: string;
+  source_tournament_db_id: string | null;
+  source_tournament_name: string;
+  attribute: string;
+  title: string;
+  body: string;
+  comment: string | null;
+  target_tournament_ids: string[];
+  target_player_id: string | null;
+  target_player_name: string | null;
+  target_user_code: string | null;
+  requested_tournament_id: string | null;
+  is_duplicate_tournament_id: boolean;
+  thread_id: string | null;
+  parent_message_id: string | null;
+  root_message_id: string | null;
+  direction: TournamentMessageDirection;
+  timestamp: string;
+  created_at: string;
+}
+
+export interface TournamentMessageRecordRow {
+  id: string;
+  tournament_id: string;
+  event_code: string;
+  source_tournament_id: string;
+  source_tournament_db_id: string | null;
+  source_tournament_name: string;
+  attribute: string;
+  title: string;
+  body: string;
+  comment: string | null;
+  target_tournament_ids_json: string | null;
+  target_player_id: string | null;
+  target_player_name: string | null;
+  target_user_code: string | null;
+  requested_tournament_id: string | null;
+  is_duplicate_tournament_id: number | null;
+  thread_id: string | null;
+  parent_message_id: string | null;
+  root_message_id: string | null;
+  direction: TournamentMessageDirection;
+  timestamp: string;
+  created_at: string;
+}
+
+// =====================
 // BracketTree
 // =====================
 export interface BracketTree {

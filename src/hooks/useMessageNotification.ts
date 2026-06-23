@@ -16,6 +16,10 @@ import type {
   NotificationMessage,
 } from "../lib/types/notification";
 import { useAppContext } from "../context/AppContext";
+import {
+  getTournamentMessages,
+  insertTournamentMessage,
+} from "../lib/database";
 
 // ─────────────────────────────────────────
 // Utilities
@@ -50,6 +54,7 @@ interface NotificationState {
 }
 
 type NotificationAction =
+  | { type: "HYDRATE_MESSAGES"; receivedMessages: ReceivedMessageEntry[]; sentMessages: SentMessageEntry[] }
   | { type: "RECEIVE_MESSAGE"; message: NotificationMessage }
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage };
 
@@ -59,6 +64,12 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
       return {
         ...state,
         receivedMessages: [{ message: action.message }, ...state.receivedMessages],
+      };
+
+    case "HYDRATE_MESSAGES":
+      return {
+        receivedMessages: action.receivedMessages,
+        sentMessages: action.sentMessages,
       };
 
     case "ADD_SENT_MESSAGE":
@@ -111,6 +122,34 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
    */
   const seenMessageIds = useRef<Set<string>>(new Set());
 
+  const persistMessage = useCallback(async (message: NotificationMessage, direction: "sent" | "received") => {
+    if (!tournament) return;
+    await insertTournamentMessage({
+      id: message.messageId,
+      tournament_id: tournament.id,
+      event_code: message.eventId,
+      source_tournament_id: message.sourceTournamentId,
+      source_tournament_db_id: message.sourceTournamentDbId ?? null,
+      source_tournament_name: message.sourceTournamentName,
+      attribute: message.attribute,
+      title: message.title,
+      body: message.body,
+      comment: message.comment ?? null,
+      target_tournament_ids: message.targetTournamentIds ?? [],
+      target_player_id: message.targetPlayerId ?? null,
+      target_player_name: message.targetPlayerName ?? null,
+      target_user_code: message.targetUserCode ?? null,
+      requested_tournament_id: message.requestedTournamentId ?? null,
+      is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
+      thread_id: message.threadId ?? message.messageId,
+      parent_message_id: message.parentMessageId ?? null,
+      root_message_id: message.rootMessageId ?? message.threadId ?? message.messageId,
+      direction,
+      timestamp: message.timestamp,
+      created_at: nowIso(),
+    });
+  }, [tournament]);
+
   const broadcast = useCallback(async (payload: MessagePayload) => {
     await invoke<void>("send_udp_broadcast", { payload: JSON.stringify(payload) });
   }, []);
@@ -143,6 +182,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       const resultMessage: NotificationMessage = {
         messageId: generateCompositeMessageId(tournament.event_code, tournament.tournament_code),
         eventId: tournament.event_code,
+        sourceTournamentDbId: tournament.id,
         sourceTournamentId: tournament.tournament_code,
         sourceTournamentName: tournament.name,
         attribute: "TOURNAMENT_ID_CHECK_RESULT",
@@ -151,13 +191,17 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         targetTournamentIds: [requestMessage.sourceTournamentId],
         requestedTournamentId: requestMessage.requestedTournamentId,
         isDuplicateTournamentId: true,
+        threadId: requestMessage.threadId ?? requestMessage.messageId,
+        parentMessageId: requestMessage.messageId,
+        rootMessageId: requestMessage.rootMessageId ?? requestMessage.threadId ?? requestMessage.messageId,
         timestamp: nowIso(),
       };
 
       seenMessageIds.current.add(resultMessage.messageId);
+      await persistMessage(resultMessage, "sent");
       await broadcast({ type: "MESSAGE", data: resultMessage });
     },
-    [tournament, broadcast]
+    [tournament, broadcast, persistMessage]
   );
 
   // ── UDP 受信リスナー ────────────────────────
@@ -165,6 +209,66 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     if (!tournament) return;
 
     let unlisten: (() => void) | undefined;
+
+    const loadPersistedMessages = async () => {
+      const records = await getTournamentMessages(tournament.id);
+      const received = records
+        .filter((record) => record.direction === "received")
+        .map((record) => ({
+          message: {
+            messageId: record.id,
+            eventId: record.event_code,
+            sourceTournamentDbId: record.source_tournament_db_id ?? undefined,
+            sourceTournamentId: record.source_tournament_id,
+            sourceTournamentName: record.source_tournament_name,
+            attribute: record.attribute as MessageAttribute,
+            title: record.title,
+            body: record.body,
+            comment: record.comment ?? undefined,
+            targetTournamentIds: record.target_tournament_ids,
+            targetPlayerId: record.target_player_id ?? undefined,
+            targetPlayerName: record.target_player_name ?? undefined,
+            targetUserCode: record.target_user_code ?? undefined,
+            requestedTournamentId: record.requested_tournament_id ?? undefined,
+            isDuplicateTournamentId: record.is_duplicate_tournament_id,
+            threadId: record.thread_id ?? undefined,
+            parentMessageId: record.parent_message_id ?? undefined,
+            rootMessageId: record.root_message_id ?? undefined,
+            timestamp: record.timestamp,
+          },
+        }));
+
+      const sent = records
+        .filter((record) => record.direction === "sent")
+        .map((record) => ({
+          message: {
+            messageId: record.id,
+            eventId: record.event_code,
+            sourceTournamentDbId: record.source_tournament_db_id ?? undefined,
+            sourceTournamentId: record.source_tournament_id,
+            sourceTournamentName: record.source_tournament_name,
+            attribute: record.attribute as MessageAttribute,
+            title: record.title,
+            body: record.body,
+            comment: record.comment ?? undefined,
+            targetTournamentIds: record.target_tournament_ids,
+            targetPlayerId: record.target_player_id ?? undefined,
+            targetPlayerName: record.target_player_name ?? undefined,
+            targetUserCode: record.target_user_code ?? undefined,
+            requestedTournamentId: record.requested_tournament_id ?? undefined,
+            isDuplicateTournamentId: record.is_duplicate_tournament_id,
+            threadId: record.thread_id ?? undefined,
+            parentMessageId: record.parent_message_id ?? undefined,
+            rootMessageId: record.root_message_id ?? undefined,
+            timestamp: record.timestamp,
+          },
+        }));
+
+      seenMessageIds.current = new Set(records.map((record) => record.id));
+      dispatch({ type: "HYDRATE_MESSAGES", receivedMessages: received, sentMessages: sent });
+    };
+
+    void loadPersistedMessages();
 
     (async () => {
       unlisten = await listen<string>("udp-received", (event) => {
@@ -192,6 +296,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         seenMessageIds.current.add(messageId);
 
         dispatch({ type: "RECEIVE_MESSAGE", message });
+        void persistMessage(message, "received");
         void maybeSendTournamentIdCheckResult(message);
       });
     })();
@@ -199,7 +304,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     return () => {
       unlisten?.();
     };
-  }, [tournament, shouldAcceptByDestination, maybeSendTournamentIdCheckResult]);
+  }, [tournament, shouldAcceptByDestination, maybeSendTournamentIdCheckResult, persistMessage]);
 
   // ── メッセージ送信 ──────────────────
   const sendMessage = useCallback(
@@ -219,6 +324,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       const message: NotificationMessage = {
         messageId: generateCompositeMessageId(tournament.event_code, tournament.tournament_code),
         eventId: tournament.event_code,
+        sourceTournamentDbId: tournament.id,
         sourceTournamentId: tournament.tournament_code,
         sourceTournamentName: tournament.name,
         attribute: input.attribute,
@@ -230,15 +336,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         targetPlayerName: input.targetPlayerName,
         targetUserCode: input.targetUserCode,
         requestedTournamentId: input.requestedTournamentId,
+        threadId: undefined,
+        parentMessageId: undefined,
+        rootMessageId: undefined,
         timestamp: nowIso(),
       };
+
+      message.threadId = message.messageId;
+      message.rootMessageId = message.messageId;
 
       // バウンスバック対策: 送信前に seenMessageIds へ登録しておく
       seenMessageIds.current.add(message.messageId);
       dispatch({ type: "ADD_SENT_MESSAGE", message });
+      await persistMessage(message, "sent");
       await broadcast({ type: "MESSAGE", data: message });
     },
-    [tournament, broadcast]
+    [tournament, broadcast, persistMessage]
   );
 
   return createElement(

@@ -38,6 +38,8 @@ export interface NotificationMessage {
   messageId: CompositeMessageId;
   /** イベントID */
   eventId: string;
+  /** 送信元大会のDB上のID */
+  sourceTournamentDbId?: string;
   /** 送信元大会ID */
   sourceTournamentId: string;
   /** 送信元大会名 */
@@ -67,6 +69,13 @@ export interface NotificationMessage {
   requestedTournamentId?: string;
   /** TOURNAMENT_ID_CHECK_RESULT 用: 重複有無 */
   isDuplicateTournamentId?: boolean;
+
+  /** スレッドID。初回メッセージでは messageId を入れる */
+  threadId?: string;
+  /** 親メッセージID。返信時のみ設定する */
+  parentMessageId?: string;
+  /** スレッドの起点となるメッセージID */
+  rootMessageId?: string;
 
   /** 送信タイムスタンプ (ISO 8601) */
   timestamp: string;
