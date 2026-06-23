@@ -8,6 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -59,6 +60,7 @@ interface NotificationState {
   receivedMessages: ReceivedMessageEntry[];
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
+  unreadReceivedCount: number;
 }
 
 type NotificationAction =
@@ -68,9 +70,10 @@ type NotificationAction =
       sentMessages: SentMessageEntry[];
       unmatchedMessages: UnmatchedMessageEntry[];
     }
-  | { type: "RECEIVE_MESSAGE"; message: NotificationMessage }
+  | { type: "RECEIVE_MESSAGE"; message: NotificationMessage; markAsUnread: boolean }
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage }
-  | { type: "ADD_UNMATCHED_MESSAGE"; message: NotificationMessage };
+  | { type: "ADD_UNMATCHED_MESSAGE"; message: NotificationMessage }
+  | { type: "MARK_ALL_RECEIVED_READ" };
 
 function reducer(state: NotificationState, action: NotificationAction): NotificationState {
   switch (action.type) {
@@ -78,6 +81,9 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
       return {
         ...state,
         receivedMessages: [{ message: action.message }, ...state.receivedMessages],
+        unreadReceivedCount: action.markAsUnread
+          ? state.unreadReceivedCount + 1
+          : state.unreadReceivedCount,
       };
 
     case "HYDRATE_MESSAGES":
@@ -85,6 +91,7 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         receivedMessages: action.receivedMessages,
         sentMessages: action.sentMessages,
         unmatchedMessages: action.unmatchedMessages,
+        unreadReceivedCount: 0,
       };
 
     case "ADD_SENT_MESSAGE":
@@ -99,6 +106,13 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         unmatchedMessages: [{ message: action.message }, ...state.unmatchedMessages],
       };
 
+    case "MARK_ALL_RECEIVED_READ":
+      if (state.unreadReceivedCount === 0) return state;
+      return {
+        ...state,
+        unreadReceivedCount: 0,
+      };
+
     default:
       return state;
   }
@@ -108,12 +122,14 @@ const initialState: NotificationState = {
   receivedMessages: [],
   sentMessages: [],
   unmatchedMessages: [],
+  unreadReceivedCount: 0,
 };
 
 type MessageNotificationContextValue = {
   receivedMessages: ReceivedMessageEntry[];
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
+  unreadReceivedCount: number;
   sendMessage: (input: {
     attribute: MessageAttribute;
     title: string;
@@ -135,6 +151,7 @@ const MessageNotificationContext = createContext<MessageNotificationContextValue
 
 export function MessageNotificationProvider({ children }: { children: ReactNode }) {
   const { tournament, tournamentList } = useAppContext();
+  const location = useLocation();
   const [state, dispatch] = useReducer(reducer, initialState);
 
   /**
@@ -230,6 +247,37 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
   const broadcast = useCallback(async (payload: MessagePayload) => {
     await invoke<void>("send_udp_broadcast", { payload: JSON.stringify(payload) });
+  }, []);
+
+  const notifyIncomingMessage = useCallback((message: NotificationMessage) => {
+    if (!("Notification" in window)) return;
+
+    const title = `新着メッセージ: ${message.title}`;
+    const body = `${message.sourceTournamentName} (${message.eventId}-${message.sourceTournamentId})`;
+
+    const showNotification = () => {
+      try {
+        new Notification(title, {
+          body,
+          tag: message.messageId,
+        });
+      } catch {
+        // 通知APIが失敗してもアプリ動作は継続
+      }
+    };
+
+    if (Notification.permission === "granted") {
+      showNotification();
+      return;
+    }
+
+    if (Notification.permission === "default") {
+      void Notification.requestPermission().then((permission) => {
+        if (permission === "granted") {
+          showNotification();
+        }
+      });
+    }
   }, []);
 
   const shouldAcceptByDestination = useCallback(
@@ -440,7 +488,15 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           }
 
           if (tournament && acceptedTournaments.some((t) => t.id === tournament.id)) {
-            dispatch({ type: "RECEIVE_MESSAGE", message });
+            const isOnNotificationPage = location.pathname === "/notification";
+            dispatch({
+              type: "RECEIVE_MESSAGE",
+              message,
+              markAsUnread: !isOnNotificationPage,
+            });
+            if (!isOnNotificationPage) {
+              notifyIncomingMessage(message);
+            }
             void maybeSendTournamentIdCheckResult(message);
           }
 
@@ -461,14 +517,21 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       unlisten?.();
     };
   }, [
+    location.pathname,
     tournament,
     tournamentList,
     shouldAcceptByDestination,
     maybeSendTournamentIdCheckResult,
-    persistMessage,
     persistMessageForTournament,
     persistUnmatchedMessage,
+    notifyIncomingMessage,
   ]);
+
+  useEffect(() => {
+    if (location.pathname === "/notification") {
+      dispatch({ type: "MARK_ALL_RECEIVED_READ" });
+    }
+  }, [location.pathname]);
 
   // ── メッセージ送信 ──────────────────
   const sendMessage = useCallback(
@@ -526,6 +589,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         receivedMessages: state.receivedMessages,
         sentMessages: state.sentMessages,
         unmatchedMessages: state.unmatchedMessages,
+        unreadReceivedCount: state.unreadReceivedCount,
         sendMessage,
       },
     },
@@ -543,6 +607,7 @@ export function useMessageNotification() {
     receivedMessages: context.receivedMessages,
     sentMessages: context.sentMessages,
     unmatchedMessages: context.unmatchedMessages,
+    unreadReceivedCount: context.unreadReceivedCount,
     sendMessage: context.sendMessage,
   };
 }

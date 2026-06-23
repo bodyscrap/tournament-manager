@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { useAppContext } from "../../context/AppContext";
+import { useMessageNotification } from "../../hooks/useMessageNotification";
 
 const navItems = [
   { to: "/", label: "大会一覧", icon: "🏠" },
@@ -28,6 +29,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function Sidebar() {
   const { tournament, pinnedTournament, isReadOnly, selectTournament } = useAppContext();
+  const { unreadReceivedCount } = useMessageNotification();
   const [appVersion, setAppVersion] = useState<string>("-");
 
   useEffect(() => {
@@ -94,7 +96,12 @@ export function Sidebar() {
             }
           >
             <span>{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="flex-1">{item.label}</span>
+            {item.to === "/notification" && unreadReceivedCount > 0 && (
+              <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[11px] font-bold leading-5 text-center">
+                {unreadReceivedCount > 99 ? "99+" : unreadReceivedCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
