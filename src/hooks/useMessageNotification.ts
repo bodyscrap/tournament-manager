@@ -20,7 +20,6 @@ import {
   getTournamentMessages,
   getTournamentsByEventCode,
   getUnmatchedMessages,
-  hasTournamentMessageById,
   insertUnmatchedMessage,
   insertTournamentMessage,
 } from "../lib/database";
@@ -417,11 +416,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         if (seenMessageIds.current.has(messageId)) return;
 
         void (async () => {
-          if (await hasTournamentMessageById(messageId)) {
-            seenMessageIds.current.add(messageId);
-            return;
-          }
-
           const sameEventTournaments = await getTournamentsByEventCode(message.eventId);
           const targets = message.targetTournamentIds ?? [];
           const acceptedTournaments = sameEventTournaments.filter((t) => {

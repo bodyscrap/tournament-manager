@@ -95,11 +95,19 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
       thread_id             TEXT,
       parent_message_id     TEXT,
       root_message_id       TEXT,
+      direction             TEXT NOT NULL DEFAULT 'received',
       timestamp             TEXT NOT NULL,
       created_at            TEXT NOT NULL,
       PRIMARY KEY (id, tournament_id)
     );
   `);
+
+  // Migration: add direction column when missing.
+  try {
+    await db.execute(`ALTER TABLE tournament_messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'`);
+  } catch {
+    // exists
+  }
 
   // Migration: old schema used `id` as single primary key, which prevented
   // storing one incoming message into multiple local tournaments.
@@ -909,13 +917,13 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
       is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
-      timestamp, created_at
+      direction, timestamp, created_at
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10, $11,
       $12, $13, $14, $15,
       $16, $17, $18, $19,
-      $20, $21
+      $20, $21, $22
     )`,
     [
       record.id,
@@ -937,6 +945,7 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       record.thread_id,
       record.parent_message_id,
       record.root_message_id,
+      record.direction,
       record.timestamp,
       new Date().toISOString(),
     ]
