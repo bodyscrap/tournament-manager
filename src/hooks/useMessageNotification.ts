@@ -383,7 +383,10 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         },
       }));
 
-      seenMessageIds.current = new Set(records.map((record) => record.id));
+      seenMessageIds.current = new Set([
+        ...records.map((record) => record.id),
+        ...unmatchedRecords.map((record) => record.id),
+      ]);
       dispatch({
         type: "HYDRATE_MESSAGES",
         receivedMessages: received,
@@ -431,7 +434,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
           if (acceptedTournaments.length === 0) {
             await persistUnmatchedMessage(message);
-            if (tournament && message.eventId === tournament.event_code) {
+            if (tournament) {
               dispatch({ type: "ADD_UNMATCHED_MESSAGE", message });
             }
             seenMessageIds.current.add(messageId);
@@ -448,7 +451,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           }
 
           seenMessageIds.current.add(messageId);
-        })();
+        })().catch((error) => {
+          console.error("[Message] Failed to distribute incoming message", error);
+        });
 
         // NOTE: async block handles dispatch/persist and seen state.
         return;

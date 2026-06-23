@@ -76,7 +76,7 @@ async function ensureMatchActionLogsTable(db: Database): Promise<void> {
 async function ensureTournamentMessagesTable(db: Database): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS tournament_messages (
-      id                    TEXT PRIMARY KEY,
+      id                    TEXT NOT NULL,
       tournament_id         TEXT NOT NULL,
       event_code            TEXT NOT NULL,
       source_tournament_id  TEXT NOT NULL,
@@ -96,9 +96,71 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
       parent_message_id     TEXT,
       root_message_id       TEXT,
       timestamp             TEXT NOT NULL,
-      created_at            TEXT NOT NULL
+      created_at            TEXT NOT NULL,
+      PRIMARY KEY (id, tournament_id)
     );
   `);
+
+  // Migration: old schema used `id` as single primary key, which prevented
+  // storing one incoming message into multiple local tournaments.
+  try {
+    const columns = await db.select<Array<{ name: string; pk: number }>>(
+      "PRAGMA table_info(tournament_messages)"
+    );
+    const idPk = columns.find((c) => c.name === "id")?.pk ?? 0;
+    const tournamentPk = columns.find((c) => c.name === "tournament_id")?.pk ?? 0;
+    const needsRebuild = idPk === 1 && tournamentPk === 0;
+
+    if (needsRebuild) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS tournament_messages_v2 (
+          id                    TEXT NOT NULL,
+          tournament_id         TEXT NOT NULL,
+          event_code            TEXT NOT NULL,
+          source_tournament_id  TEXT NOT NULL,
+          source_tournament_db_id TEXT,
+          source_tournament_name TEXT NOT NULL,
+          attribute             TEXT NOT NULL,
+          title                 TEXT NOT NULL,
+          body                  TEXT NOT NULL,
+          comment               TEXT,
+          target_tournament_ids_json TEXT,
+          target_player_id      TEXT,
+          target_player_name    TEXT,
+          target_user_code      TEXT,
+          requested_tournament_id TEXT,
+          is_duplicate_tournament_id INTEGER,
+          thread_id             TEXT,
+          parent_message_id     TEXT,
+          root_message_id       TEXT,
+          direction             TEXT NOT NULL,
+          timestamp             TEXT NOT NULL,
+          created_at            TEXT NOT NULL,
+          PRIMARY KEY (id, tournament_id)
+        );
+      `);
+      await db.execute(`
+        INSERT OR IGNORE INTO tournament_messages_v2 (
+          id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
+          source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
+          target_player_id, target_player_name, target_user_code, requested_tournament_id,
+          is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+          direction, timestamp, created_at
+        )
+        SELECT
+          id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
+          source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
+          target_player_id, target_player_name, target_user_code, requested_tournament_id,
+          is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+          direction, timestamp, created_at
+        FROM tournament_messages;
+      `);
+      await db.execute(`DROP TABLE tournament_messages`);
+      await db.execute(`ALTER TABLE tournament_messages_v2 RENAME TO tournament_messages`);
+    }
+  } catch {
+    // Keep app usable even if migration introspection fails.
+  }
 }
 
 async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
@@ -842,7 +904,7 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
   const db = await getDb();
   await ensureTournamentMessagesTable(db);
   await db.execute(
-    `INSERT INTO tournament_messages (
+    `INSERT OR IGNORE INTO tournament_messages (
       id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
