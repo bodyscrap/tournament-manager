@@ -62,6 +62,9 @@ function TournamentCard({
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-gray-900 truncate">{t.name}</p>
             <p className="text-xs text-gray-400 mt-0.5">{typeLabel} · {date}</p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              イベントID: <span className="font-mono">{t.event_code}</span> / 大会ID: <span className="font-mono">{t.tournament_code}</span>
+            </p>
           </div>
           <StatusBadge status={t.status} />
         </div>
