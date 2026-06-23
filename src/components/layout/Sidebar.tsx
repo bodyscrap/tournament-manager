@@ -47,7 +47,7 @@ export function Sidebar() {
   }, []);
 
   return (
-    <aside className="w-56 shrink-0 bg-gray-900 text-white flex flex-col min-h-screen">
+    <aside className="w-56 shrink-0 bg-gray-900 text-white flex flex-col h-screen sticky top-0 overflow-y-auto">
       <div className="px-4 py-5 border-b border-gray-700">
         <div className="flex items-baseline gap-2">
           <h1 className="text-lg font-bold tracking-wide">🥫 サバ管</h1>

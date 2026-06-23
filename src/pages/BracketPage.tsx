@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
+import { useMessageNotification } from "../hooks/useMessageNotification";
 import { BracketSection } from "../components/bracket/BracketSection";
 import { QrScannerDialog } from "../components/common/QrScannerDialog";
 import type { DragState } from "../components/bracket/BracketSection";
@@ -19,6 +20,7 @@ type ScannedCodeInfo = {
 
 export function BracketPage() {
   const navigate = useNavigate();
+  const { unreadReceivedCount } = useMessageNotification();
   const {
     tournament,
     matches: tournamentMatches,
@@ -71,10 +73,12 @@ export function BracketPage() {
   const [detailPlayerId, setDetailPlayerId] = useState<string | null>(null);
   const [sideRandomizeNotice, setSideRandomizeNotice] = useState<"changed" | "unchanged" | null>(null);
   const [sideRandomizeNoticeVisible, setSideRandomizeNoticeVisible] = useState(false);
+  const [showBracketMessageNotice, setShowBracketMessageNotice] = useState(false);
 
   // Drag-and-drop state
   const [draggingFrom, setDraggingFrom] = useState<DragState | null>(null);
   const dragSourceRef = useRef<DragState | null>(null);
+  const previousUnreadRef = useRef(0);
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
   const adminMap = new Map(admins.map((a) => [a.admin_id, a]));
@@ -93,6 +97,13 @@ export function BracketPage() {
       window.clearTimeout(clearTimer);
     };
   }, [sideRandomizeNotice]);
+
+  useEffect(() => {
+    if (unreadReceivedCount > previousUnreadRef.current) {
+      setShowBracketMessageNotice(true);
+    }
+    previousUnreadRef.current = unreadReceivedCount;
+  }, [unreadReceivedCount]);
 
   const getMatchDisplayTitle = (m: Match) => {
     const bracketLabel =
@@ -1021,7 +1032,7 @@ export function BracketPage() {
   const orphanMatches = tournamentMatches.filter((m) => !m.tree_id);
 
   return (
-    <div className="p-6">
+    <div className="h-full flex flex-col overflow-hidden p-6">
       {isReadOnly && (
         <div className="mb-4 px-4 py-3 bg-gray-100 border border-gray-300 rounded-xl flex items-center gap-2 text-sm text-gray-600">
           <span>🔒</span>
@@ -1075,6 +1086,30 @@ export function BracketPage() {
       <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
         カードを開く: カード内の任意の場所をクリック / シード入れ替え: Ctrlを押しながらプレイヤー名をドラッグ&ドロップ
       </div>
+
+      {unreadReceivedCount > 0 && showBracketMessageNotice && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="text-sm text-red-700 font-medium">
+            📢 新着メッセージ {unreadReceivedCount} 件
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/notification")}
+              className="px-3 py-1.5 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+            >
+              メッセージを開く
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBracketMessageNotice(false)}
+              className="px-3 py-1.5 text-xs rounded bg-white border border-red-200 text-red-700 hover:bg-red-100"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Match search dialog */}
       {showMatchSearch && (
@@ -1664,6 +1699,8 @@ export function BracketPage() {
         onDetected={handleDetectedQr}
       />
 
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+
       {/* ツリーごとにブラケットを表示 */}
       {trees.map((tree) => {
         const treeMatches = tournamentMatches.filter((m) => m.tree_id === tree.id);
@@ -1776,6 +1813,8 @@ export function BracketPage() {
           />
         </div>
       )}
+
+      </div>
 
       {renderParticipantDetailDialog()}
     </div>

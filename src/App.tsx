@@ -25,20 +25,22 @@ function AppShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex h-screen overflow-hidden bg-gray-50">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/players" element={<PlayersPage />} />
-          <Route path="/character-lists" element={<CharacterListsPage />} />
-          <Route path="/tournament/setup" element={<TournamentSetupPage />} />
-          <Route path="/tournament/bracket" element={<BracketPage />} />
-          <Route path="/tournament/users" element={<TournamentUsersPage />} />
-          <Route path="/tournament/player-cards" element={<TournamentUsersPage />} />
-          <Route path="/tournament/admins" element={<TournamentUsersPage />} />
-          <Route path="/notification" element={<NotificationPage />} />
-        </Routes>
+      <main className="flex-1 min-h-0 overflow-hidden">
+        <div className="h-full overflow-y-auto">
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/players" element={<PlayersPage />} />
+            <Route path="/character-lists" element={<CharacterListsPage />} />
+            <Route path="/tournament/setup" element={<TournamentSetupPage />} />
+            <Route path="/tournament/bracket" element={<BracketPage />} />
+            <Route path="/tournament/users" element={<TournamentUsersPage />} />
+            <Route path="/tournament/player-cards" element={<TournamentUsersPage />} />
+            <Route path="/tournament/admins" element={<TournamentUsersPage />} />
+            <Route path="/notification" element={<NotificationPage />} />
+          </Routes>
+        </div>
       </main>
     </div>
   );
