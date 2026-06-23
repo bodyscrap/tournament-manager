@@ -77,6 +77,11 @@ export interface NotificationMessage {
   /** スレッドの起点となるメッセージID */
   rootMessageId?: string;
 
+  /** 送信時刻 (ISO 8601) */
+  sentAt: string;
+  /** 受信時刻 (ISO 8601) */
+  receivedAt?: string;
+
   /** 送信タイムスタンプ (ISO 8601) */
   timestamp: string;
 }

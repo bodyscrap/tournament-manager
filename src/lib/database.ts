@@ -30,6 +30,8 @@ import type {
   MatchPlayerSide,
   TournamentMessageRecord,
   TournamentMessageRecordRow,
+  UnmatchedMessageRecord,
+  UnmatchedMessageRecordRow,
 } from "./types";
 import { normalizeCharacterSelectionConfig } from "./characterSelection";
 
@@ -76,6 +78,33 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS tournament_messages (
       id                    TEXT PRIMARY KEY,
       tournament_id         TEXT NOT NULL,
+      event_code            TEXT NOT NULL,
+      source_tournament_id  TEXT NOT NULL,
+      source_tournament_db_id TEXT,
+      source_tournament_name TEXT NOT NULL,
+      attribute             TEXT NOT NULL,
+      title                 TEXT NOT NULL,
+      body                  TEXT NOT NULL,
+      comment               TEXT,
+      target_tournament_ids_json TEXT,
+      target_player_id      TEXT,
+      target_player_name    TEXT,
+      target_user_code      TEXT,
+      requested_tournament_id TEXT,
+      is_duplicate_tournament_id INTEGER,
+      thread_id             TEXT,
+      parent_message_id     TEXT,
+      root_message_id       TEXT,
+      timestamp             TEXT NOT NULL,
+      created_at            TEXT NOT NULL
+    );
+  `);
+}
+
+async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS unmatched_messages (
+      id                    TEXT PRIMARY KEY,
       event_code            TEXT NOT NULL,
       source_tournament_id  TEXT NOT NULL,
       source_tournament_db_id TEXT,
@@ -176,6 +205,7 @@ async function initSchema(db: Database): Promise<void> {
   await ensureTournamentAdminsTable(db);
   await ensureMatchActionLogsTable(db);
   await ensureTournamentMessagesTable(db);
+  await ensureUnmatchedMessagesTable(db);
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS matches (
@@ -738,6 +768,25 @@ export async function deleteTournament(id: string): Promise<void> {
   await db.execute(`DELETE FROM tournament WHERE id = $1`, [id]);
 }
 
+export async function getTournamentsByEventCode(event_code: string): Promise<Tournament[]> {
+  const db = await getDb();
+  const rows = await db.select<TournamentRow[]>(
+    "SELECT * FROM tournament WHERE event_code = $1 ORDER BY created_at DESC",
+    [event_code]
+  );
+  return rows.map(rowToTournament);
+}
+
+export async function hasTournamentMessageById(id: string): Promise<boolean> {
+  const db = await getDb();
+  await ensureTournamentMessagesTable(db);
+  const rows = await db.select<{ count: number }[]>(
+    "SELECT COUNT(1) as count FROM tournament_messages WHERE id = $1",
+    [id]
+  );
+  return (rows[0]?.count ?? 0) > 0;
+}
+
 function rowToTournamentMessage(row: TournamentMessageRecordRow): TournamentMessageRecord {
   let targetTournamentIds: string[] = [];
   if (row.target_tournament_ids_json) {
@@ -828,6 +877,96 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       record.root_message_id,
       record.timestamp,
       new Date().toISOString(),
+    ]
+  );
+}
+
+function rowToUnmatchedMessage(row: UnmatchedMessageRecordRow): UnmatchedMessageRecord {
+  let targetTournamentIds: string[] = [];
+  if (row.target_tournament_ids_json) {
+    try {
+      const parsed = JSON.parse(row.target_tournament_ids_json);
+      if (Array.isArray(parsed)) {
+        targetTournamentIds = parsed
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value) => value.length > 0);
+      }
+    } catch {
+      targetTournamentIds = [];
+    }
+  }
+
+  return {
+    id: row.id,
+    event_code: row.event_code,
+    source_tournament_db_id: row.source_tournament_db_id,
+    source_tournament_id: row.source_tournament_id,
+    source_tournament_name: row.source_tournament_name,
+    attribute: row.attribute,
+    title: row.title,
+    body: row.body,
+    comment: row.comment,
+    target_tournament_ids: targetTournamentIds,
+    target_player_id: row.target_player_id,
+    target_player_name: row.target_player_name,
+    target_user_code: row.target_user_code,
+    requested_tournament_id: row.requested_tournament_id,
+    is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
+    thread_id: row.thread_id,
+    parent_message_id: row.parent_message_id,
+    root_message_id: row.root_message_id,
+    timestamp: row.timestamp,
+    created_at: row.created_at,
+  };
+}
+
+export async function getUnmatchedMessages(): Promise<UnmatchedMessageRecord[]> {
+  const db = await getDb();
+  await ensureUnmatchedMessagesTable(db);
+  const rows = await db.select<UnmatchedMessageRecordRow[]>(
+    "SELECT * FROM unmatched_messages ORDER BY created_at DESC"
+  );
+  return rows.map(rowToUnmatchedMessage);
+}
+
+export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Promise<void> {
+  const db = await getDb();
+  await ensureUnmatchedMessagesTable(db);
+  await db.execute(
+    `INSERT OR IGNORE INTO unmatched_messages (
+      id, event_code, source_tournament_id, source_tournament_db_id,
+      source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
+      target_player_id, target_player_name, target_user_code, requested_tournament_id,
+      is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+      timestamp, created_at
+    ) VALUES (
+      $1, $2, $3, $4,
+      $5, $6, $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, $17, $18,
+      $19, $20
+    )`,
+    [
+      record.id,
+      record.event_code,
+      record.source_tournament_id,
+      record.source_tournament_db_id,
+      record.source_tournament_name,
+      record.attribute,
+      record.title,
+      record.body,
+      record.comment,
+      JSON.stringify(record.target_tournament_ids ?? []),
+      record.target_player_id,
+      record.target_player_name,
+      record.target_user_code,
+      record.requested_tournament_id,
+      record.is_duplicate_tournament_id ? 1 : 0,
+      record.thread_id,
+      record.parent_message_id,
+      record.root_message_id,
+      record.timestamp,
+      record.created_at,
     ]
   );
 }

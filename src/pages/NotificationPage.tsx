@@ -7,7 +7,7 @@ import type { MessageAttribute } from "../lib/types/notification";
 
 const MAX_COMMENT_LEN = 300;
 
-type Tab = "received" | "sent";
+type Tab = "received" | "sent" | "unmatched";
 type ComposeKind = "CALL" | "TOURNAMENT_ID_CHECK" | "GENERAL";
 
 type PlayerOption = {
@@ -52,6 +52,8 @@ function parseTargetTournamentIds(value: string): string[] {
 
 function MessageCard({ entry }: { entry: ReceivedMessageEntry | SentMessageEntry }) {
   const message = entry.message;
+  const sentTime = message.sentAt ?? message.timestamp;
+  const receivedTime = message.receivedAt;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -73,7 +75,18 @@ function MessageCard({ entry }: { entry: ReceivedMessageEntry | SentMessageEntry
             </p>
           )}
         </div>
-        <p className="text-xs text-gray-400 shrink-0">{fmtTime(message.timestamp)}</p>
+        <p className="text-xs text-gray-400 shrink-0">{fmtTime(sentTime)}</p>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+        <p>
+          送信: <span className="font-mono">{fmtTime(sentTime)}</span>
+        </p>
+        {receivedTime && (
+          <p>
+            受信: <span className="font-mono">{fmtTime(receivedTime)}</span>
+          </p>
+        )}
       </div>
 
       <pre className="mt-3 text-sm text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg p-3">
@@ -382,7 +395,7 @@ export function NotificationPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { tournament, participants } = useAppContext();
-  const { receivedMessages, sentMessages, sendMessage } = useMessageNotification();
+  const { receivedMessages, sentMessages, unmatchedMessages, sendMessage } = useMessageNotification();
 
   const [tab, setTab] = useState<Tab>("received");
   const [showCompose, setShowCompose] = useState(false);
@@ -428,7 +441,7 @@ export function NotificationPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">📢 通知システム</h1>
+          <h1 className="text-xl font-bold text-gray-900">📢 メッセージ</h1>
           <p className="text-xs text-gray-400 mt-0.5">
             イベント: <span className="font-mono">{tournament.event_code}</span>
             {" / "}大会: <span className="font-mono">{tournament.tournament_code}</span>
@@ -462,6 +475,14 @@ export function NotificationPage() {
         >
           自分が送信したメッセージ
         </button>
+        <button
+          onClick={() => setTab("unmatched")}
+          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+            tab === "unmatched" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+          }`}
+        >
+          未受理メッセージ
+        </button>
       </div>
 
       {tab === "received" && (
@@ -481,6 +502,17 @@ export function NotificationPage() {
             <p className="text-center text-gray-400 py-12 text-sm">送信したメッセージはありません</p>
           )}
           {sentMessages.map((entry) => (
+            <MessageCard key={entry.message.messageId} entry={entry} />
+          ))}
+        </div>
+      )}
+
+      {tab === "unmatched" && (
+        <div className="space-y-3">
+          {unmatchedMessages.length === 0 && (
+            <p className="text-center text-gray-400 py-12 text-sm">未受理メッセージはありません</p>
+          )}
+          {unmatchedMessages.map((entry) => (
             <MessageCard key={entry.message.messageId} entry={entry} />
           ))}
         </div>

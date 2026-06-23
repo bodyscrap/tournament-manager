@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { getVersion } from "@tauri-apps/api/app";
 import { useAppContext } from "../../context/AppContext";
 
 const navItems = [
@@ -7,7 +9,7 @@ const navItems = [
   { to: "/tournament/bracket", label: "ブラケット", icon: "🏆" },
   { to: "/character-lists", label: "アイテムリスト", icon: "📚" },
   { to: "/tournament/users", label: "ユーザーリスト", icon: "👥" },
-  { to: "/notification", label: "通知システム", icon: "📢" },
+  { to: "/notification", label: "メッセージ", icon: "📢" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -26,11 +28,29 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function Sidebar() {
   const { tournament, pinnedTournament, isReadOnly, selectTournament } = useAppContext();
+  const [appVersion, setAppVersion] = useState<string>("-");
+
+  useEffect(() => {
+    let mounted = true;
+    void getVersion()
+      .then((version) => {
+        if (mounted) setAppVersion(version);
+      })
+      .catch(() => {
+        if (mounted) setAppVersion("-");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <aside className="w-56 shrink-0 bg-gray-900 text-white flex flex-col min-h-screen">
       <div className="px-4 py-5 border-b border-gray-700">
-        <h1 className="text-lg font-bold tracking-wide">🥫 サバ管</h1>
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-lg font-bold tracking-wide">🥫 サバ管</h1>
+          <span className="text-[11px] font-mono text-gray-400">v{appVersion}</span>
+        </div>
         <p className="text-xs text-gray-400 mt-0.5">選択中の大会</p>
         {tournament && (
           <div className="mt-3 px-2 py-2 bg-gray-800 rounded-lg">
