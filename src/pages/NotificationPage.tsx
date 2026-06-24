@@ -80,10 +80,12 @@ function parseTargetTournamentIds(value: string): string[] {
 function MessageListItem({
   entry,
   isSelected,
+  isThreadResolved,
   onClick,
 }: {
   entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry;
   isSelected: boolean;
+  isThreadResolved: boolean;
   onClick: () => void;
 }) {
   const message = entry.message;
@@ -99,9 +101,14 @@ function MessageListItem({
       }`}
     >
       <div className="flex items-start gap-2">
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${attributeColor(message.attribute)}`}>
-          {attributeLabel(message.attribute)}
-        </span>
+        <div className="shrink-0 flex flex-col items-start gap-1">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${attributeColor(message.attribute)}`}>
+            {attributeLabel(message.attribute)}
+          </span>
+          {isThreadResolved && (
+            <span className="text-[11px] text-emerald-700 font-medium">✓ 解決</span>
+          )}
+        </div>
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-gray-900 truncate text-sm">{message.title}</p>
           <p className="text-xs text-gray-500 mt-0.5 truncate">
@@ -1053,6 +1060,7 @@ export function NotificationPage() {
                   key={entry.message.messageId}
                   entry={entry}
                   isSelected={selectedMessage?.message.messageId === entry.message.messageId}
+                  isThreadResolved={resolvedThreadMap.has(entry.message.threadId ?? entry.message.messageId)}
                   onClick={() => setSelectedMessageId(entry.message.messageId)}
                 />
               ))}
