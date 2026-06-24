@@ -25,6 +25,38 @@ import {
   insertTournamentMessage,
 } from "../lib/database";
 
+const MESSAGE_LAST_SEEN_KEY = "message-last-seen-by-tournament";
+
+type LastSeenByTournament = Record<string, string>;
+
+function loadLastSeenByTournament(): LastSeenByTournament {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(MESSAGE_LAST_SEEN_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: LastSeenByTournament = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveLastSeenByTournament(lastSeenByTournament: LastSeenByTournament): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MESSAGE_LAST_SEEN_KEY, JSON.stringify(lastSeenByTournament));
+  } catch {
+    // localStorage が使えない環境でも動作は継続
+  }
+}
+
 // ─────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────
@@ -38,6 +70,11 @@ function generateCompositeMessageId(eventId: string, tournamentId: string): stri
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function toMatchSlot(slot: number | null | undefined): 1 | 2 | undefined {
+  if (slot === 1 || slot === 2) return slot;
+  return undefined;
 }
 
 // ─────────────────────────────────────────
@@ -69,6 +106,7 @@ type NotificationAction =
       receivedMessages: ReceivedMessageEntry[];
       sentMessages: SentMessageEntry[];
       unmatchedMessages: UnmatchedMessageEntry[];
+      unreadReceivedCount: number;
     }
   | { type: "RECEIVE_MESSAGE"; message: NotificationMessage; markAsUnread: boolean }
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage }
@@ -91,7 +129,7 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         receivedMessages: action.receivedMessages,
         sentMessages: action.sentMessages,
         unmatchedMessages: action.unmatchedMessages,
-        unreadReceivedCount: 0,
+        unreadReceivedCount: action.unreadReceivedCount,
       };
 
     case "ADD_SENT_MESSAGE":
@@ -168,6 +206,8 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
   const { tournament, tournamentList } = useAppContext();
   const location = useLocation();
   const [state, dispatch] = useReducer(reducer, initialState);
+  const previousTournamentIdRef = useRef<string | null>(null);
+  const lastSeenByTournamentRef = useRef<LastSeenByTournament>(loadLastSeenByTournament());
 
   /**
    * 処理済み messageId の Set。
@@ -331,6 +371,16 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     }
   }, []);
 
+  const updateTournamentLastSeen = useCallback((tournamentId: string, seenAtIso?: string) => {
+    const nextSeenAt = seenAtIso ?? nowIso();
+    const nextMap: LastSeenByTournament = {
+      ...lastSeenByTournamentRef.current,
+      [tournamentId]: nextSeenAt,
+    };
+    lastSeenByTournamentRef.current = nextMap;
+    saveLastSeenByTournament(nextMap);
+  }, []);
+
   const shouldAcceptByDestination = useCallback(
     (message: NotificationMessage): boolean => {
       const targets = message.targetTournamentIds ?? [];
@@ -393,12 +443,14 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           receivedMessages: [],
           sentMessages: [],
           unmatchedMessages: [],
+          unreadReceivedCount: 0,
         });
         return;
       }
 
       const records = await getTournamentMessages(tournament.id);
       const unmatchedRecords = await getUnmatchedMessages();
+      const lastSeenAt = lastSeenByTournamentRef.current[tournament.id] ?? null;
       const received = records
         .filter((record) => record.direction === "received")
         .map((record) => ({
@@ -418,7 +470,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             targetUserCode: record.target_user_code ?? undefined,
             requestedTournamentId: record.requested_tournament_id ?? undefined,
             matchCardId: record.match_card_id ?? undefined,
-            matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+            matchSlot: toMatchSlot(record.match_slot),
             remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
             remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
             remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
@@ -438,6 +490,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             timestamp: record.timestamp,
           },
         }));
+      const unreadReceivedCount = lastSeenAt
+        ? records.filter((record) => record.direction === "received" && record.created_at > lastSeenAt).length
+        : 0;
 
       const sent = records
         .filter((record) => record.direction === "sent")
@@ -458,7 +513,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             targetUserCode: record.target_user_code ?? undefined,
             requestedTournamentId: record.requested_tournament_id ?? undefined,
             matchCardId: record.match_card_id ?? undefined,
-            matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+            matchSlot: toMatchSlot(record.match_slot),
             remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
             remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
             remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
@@ -496,7 +551,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           targetUserCode: record.target_user_code ?? undefined,
           requestedTournamentId: record.requested_tournament_id ?? undefined,
           matchCardId: record.match_card_id ?? undefined,
-          matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+          matchSlot: toMatchSlot(record.match_slot),
           remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
           remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
           remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
@@ -526,6 +581,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         receivedMessages: received,
         sentMessages: sent,
         unmatchedMessages: unmatched,
+        unreadReceivedCount,
       });
     };
 
@@ -583,6 +639,8 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             });
             if (!isOnNotificationPage) {
               notifyIncomingMessage(message);
+            } else {
+              updateTournamentLastSeen(tournament.id, message.receivedAt ?? nowIso());
             }
             void maybeSendTournamentIdCheckResult(message);
           }
@@ -612,13 +670,26 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     persistMessageForTournament,
     persistUnmatchedMessage,
     notifyIncomingMessage,
+    updateTournamentLastSeen,
   ]);
 
   useEffect(() => {
+    const currentTournamentId = tournament?.id ?? null;
+    const previousTournamentId = previousTournamentIdRef.current;
+    if (previousTournamentId && previousTournamentId !== currentTournamentId) {
+      updateTournamentLastSeen(previousTournamentId);
+    }
+    previousTournamentIdRef.current = currentTournamentId;
+  }, [tournament?.id, updateTournamentLastSeen]);
+
+  useEffect(() => {
     if (location.pathname === "/notification") {
+      if (tournament?.id) {
+        updateTournamentLastSeen(tournament.id);
+      }
       dispatch({ type: "MARK_ALL_RECEIVED_READ" });
     }
-  }, [location.pathname]);
+  }, [location.pathname, tournament?.id, updateTournamentLastSeen]);
 
   // ── メッセージ送信 ──────────────────
   const sendMessage = useCallback(

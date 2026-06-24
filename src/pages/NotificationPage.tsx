@@ -125,12 +125,10 @@ function MessageListItem({
 }
 
 function ReplyForm({
-  message,
   onSend,
   onCancel,
   isSending,
 }: {
-  message: NotificationMessage;
   onSend: (comment: string) => Promise<void>;
   onCancel: () => void;
   isSending: boolean;
@@ -197,7 +195,6 @@ function ReplyForm({
 
 function MessageDetailView({
   entry,
-  isReceived,
   onReply,
   isThreadResolved,
   canResolveThread,
@@ -211,7 +208,6 @@ function MessageDetailView({
   onApproveRemoteDq,
 }: {
   entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry | null;
-  isReceived: boolean;
   onReply: (parentMessage: NotificationMessage, replyBody: string) => Promise<void>;
   isThreadResolved: boolean;
   canResolveThread: boolean;
@@ -403,7 +399,6 @@ function MessageDetailView({
       {/* 返信フォーム */}
       {showReplyForm && canReply && (
         <ReplyForm
-          message={message}
           onSend={handleReply}
           onCancel={() => setShowReplyForm(false)}
           isSending={replySending}
@@ -1072,7 +1067,6 @@ export function NotificationPage() {
         <div className="flex-1 overflow-hidden">
           <MessageDetailView
             entry={selectedMessage}
-            isReceived={tab === "received"}
             onReply={handleReply}
             isThreadResolved={isSelectedThreadResolved}
             canResolveThread={canResolveSelectedThread}
