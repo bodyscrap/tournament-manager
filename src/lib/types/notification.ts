@@ -31,7 +31,10 @@ export type MessageAttribute =
   | "CALL"
   | "TOURNAMENT_ID_CHECK"
   | "GENERAL"
-  | "TOURNAMENT_ID_CHECK_RESULT";
+  | "TOURNAMENT_ID_CHECK_RESULT"
+  | "THREAD_RESOLVED"
+  | "REMOTE_DQ_REQUEST"
+  | "REMOTE_DQ_APPROVED";
 
 export interface NotificationMessage {
   /** 複合メッセージID */
@@ -70,12 +73,36 @@ export interface NotificationMessage {
   /** TOURNAMENT_ID_CHECK_RESULT 用: 重複有無 */
   isDuplicateTournamentId?: boolean;
 
+  /** 呼び出しカード識別子 (例: W-R1-M2) */
+  matchCardId?: string;
+  /** 呼び出し対象スロット (1 or 2) */
+  matchSlot?: 1 | 2;
+
+  /** リモートDQ申請用: 申請対象プレイヤー */
+  remoteDqTargetPlayerId?: string;
+  remoteDqTargetPlayerName?: string;
+  remoteDqTargetUserCode?: string;
+  remoteDqRequestedByTournamentId?: string;
+  remoteDqRequestedByTournamentName?: string;
+
+  /** リモートDQ承認用 */
+  remoteDqApproved?: boolean;
+
   /** スレッドID。初回メッセージでは messageId を入れる */
   threadId?: string;
   /** 親メッセージID。返信時のみ設定する */
   parentMessageId?: string;
   /** スレッドの起点となるメッセージID */
   rootMessageId?: string;
+
+  /** スレッド解決イベント用: 解決状態 */
+  threadResolved?: boolean;
+  /** スレッド解決イベント用: 解決時刻 (ISO 8601) */
+  threadResolvedAt?: string;
+  /** スレッド解決イベント用: 解決した大会ID */
+  threadResolvedByTournamentId?: string;
+  /** スレッド解決イベント用: 解決した大会名 */
+  threadResolvedByTournamentName?: string;
 
   /** 送信時刻 (ISO 8601) */
   sentAt: string;

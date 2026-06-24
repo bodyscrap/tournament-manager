@@ -91,10 +91,22 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
       target_player_name    TEXT,
       target_user_code      TEXT,
       requested_tournament_id TEXT,
+      match_card_id         TEXT,
+      match_slot            INTEGER,
+      remote_dq_target_player_id TEXT,
+      remote_dq_target_player_name TEXT,
+      remote_dq_target_user_code TEXT,
+      remote_dq_requested_by_tournament_id TEXT,
+      remote_dq_requested_by_tournament_name TEXT,
+      remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
       is_duplicate_tournament_id INTEGER,
       thread_id             TEXT,
       parent_message_id     TEXT,
       root_message_id       TEXT,
+      thread_resolved       INTEGER NOT NULL DEFAULT 0,
+      thread_resolved_at    TEXT,
+      thread_resolved_by_tournament_id TEXT,
+      thread_resolved_by_tournament_name TEXT,
       direction             TEXT NOT NULL DEFAULT 'received',
       timestamp             TEXT NOT NULL,
       created_at            TEXT NOT NULL,
@@ -105,6 +117,34 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
   // Migration: add direction column when missing.
   try {
     await db.execute(`ALTER TABLE tournament_messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'`);
+  } catch {
+    // exists
+  }
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN match_card_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN match_slot INTEGER`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_target_player_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_target_player_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_target_user_code TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_requested_by_tournament_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_requested_by_tournament_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_approved INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try {
+    await db.execute(`ALTER TABLE tournament_messages ADD COLUMN thread_resolved INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // exists
+  }
+  try {
+    await db.execute(`ALTER TABLE tournament_messages ADD COLUMN thread_resolved_at TEXT`);
+  } catch {
+    // exists
+  }
+  try {
+    await db.execute(`ALTER TABLE tournament_messages ADD COLUMN thread_resolved_by_tournament_id TEXT`);
+  } catch {
+    // exists
+  }
+  try {
+    await db.execute(`ALTER TABLE tournament_messages ADD COLUMN thread_resolved_by_tournament_name TEXT`);
   } catch {
     // exists
   }
@@ -137,10 +177,22 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
           target_player_name    TEXT,
           target_user_code      TEXT,
           requested_tournament_id TEXT,
+          match_card_id         TEXT,
+          match_slot            INTEGER,
+          remote_dq_target_player_id TEXT,
+          remote_dq_target_player_name TEXT,
+          remote_dq_target_user_code TEXT,
+          remote_dq_requested_by_tournament_id TEXT,
+          remote_dq_requested_by_tournament_name TEXT,
+          remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
           is_duplicate_tournament_id INTEGER,
           thread_id             TEXT,
           parent_message_id     TEXT,
           root_message_id       TEXT,
+          thread_resolved       INTEGER NOT NULL DEFAULT 0,
+          thread_resolved_at    TEXT,
+          thread_resolved_by_tournament_id TEXT,
+          thread_resolved_by_tournament_name TEXT,
           direction             TEXT NOT NULL,
           timestamp             TEXT NOT NULL,
           created_at            TEXT NOT NULL,
@@ -152,14 +204,20 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
           id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
           source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
           target_player_id, target_player_name, target_user_code, requested_tournament_id,
+          match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
+          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
           is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+          thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
           direction, timestamp, created_at
         )
         SELECT
           id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
           source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
           target_player_id, target_player_name, target_user_code, requested_tournament_id,
+          match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
+          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, COALESCE(remote_dq_approved, 0),
           is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+          COALESCE(thread_resolved, 0), thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
           direction, timestamp, created_at
         FROM tournament_messages;
       `);
@@ -188,14 +246,55 @@ async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
       target_player_name    TEXT,
       target_user_code      TEXT,
       requested_tournament_id TEXT,
+      match_card_id         TEXT,
+      match_slot            INTEGER,
+      remote_dq_target_player_id TEXT,
+      remote_dq_target_player_name TEXT,
+      remote_dq_target_user_code TEXT,
+      remote_dq_requested_by_tournament_id TEXT,
+      remote_dq_requested_by_tournament_name TEXT,
+      remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
       is_duplicate_tournament_id INTEGER,
       thread_id             TEXT,
       parent_message_id     TEXT,
       root_message_id       TEXT,
+      thread_resolved       INTEGER NOT NULL DEFAULT 0,
+      thread_resolved_at    TEXT,
+      thread_resolved_by_tournament_id TEXT,
+      thread_resolved_by_tournament_name TEXT,
       timestamp             TEXT NOT NULL,
       created_at            TEXT NOT NULL
     );
   `);
+
+  try {
+    await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN thread_resolved INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // exists
+  }
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN match_card_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN match_slot INTEGER`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_target_player_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_target_player_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_target_user_code TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_requested_by_tournament_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_requested_by_tournament_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_approved INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try {
+    await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN thread_resolved_at TEXT`);
+  } catch {
+    // exists
+  }
+  try {
+    await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN thread_resolved_by_tournament_id TEXT`);
+  } catch {
+    // exists
+  }
+  try {
+    await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN thread_resolved_by_tournament_name TEXT`);
+  } catch {
+    // exists
+  }
 }
 
 export async function getDb(): Promise<Database> {
@@ -888,10 +987,22 @@ function rowToTournamentMessage(row: TournamentMessageRecordRow): TournamentMess
     target_player_name: row.target_player_name,
     target_user_code: row.target_user_code,
     requested_tournament_id: row.requested_tournament_id,
+    match_card_id: row.match_card_id,
+    match_slot: row.match_slot,
+    remote_dq_target_player_id: row.remote_dq_target_player_id,
+    remote_dq_target_player_name: row.remote_dq_target_player_name,
+    remote_dq_target_user_code: row.remote_dq_target_user_code,
+    remote_dq_requested_by_tournament_id: row.remote_dq_requested_by_tournament_id,
+    remote_dq_requested_by_tournament_name: row.remote_dq_requested_by_tournament_name,
+    remote_dq_approved: row.remote_dq_approved === 1,
     is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
     thread_id: row.thread_id,
     parent_message_id: row.parent_message_id,
     root_message_id: row.root_message_id,
+    thread_resolved: row.thread_resolved === 1,
+    thread_resolved_at: row.thread_resolved_at,
+    thread_resolved_by_tournament_id: row.thread_resolved_by_tournament_id,
+    thread_resolved_by_tournament_name: row.thread_resolved_by_tournament_name,
     direction: row.direction,
     timestamp: row.timestamp,
     created_at: row.created_at,
@@ -916,14 +1027,20 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       id, tournament_id, event_code, source_tournament_id, source_tournament_db_id,
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
+      match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
+      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
       is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+      thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
       direction, timestamp, created_at
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10, $11,
       $12, $13, $14, $15,
       $16, $17, $18, $19,
-      $20, $21, $22
+      $20, $21, $22, $23,
+      $24, $25, $26, $27,
+      $28, $29, $30, $31,
+      $32, $33, $34
     )`,
     [
       record.id,
@@ -941,10 +1058,22 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       record.target_player_name,
       record.target_user_code,
       record.requested_tournament_id,
+      record.match_card_id,
+      record.match_slot,
+      record.remote_dq_target_player_id,
+      record.remote_dq_target_player_name,
+      record.remote_dq_target_user_code,
+      record.remote_dq_requested_by_tournament_id,
+      record.remote_dq_requested_by_tournament_name,
+      record.remote_dq_approved ? 1 : 0,
       record.is_duplicate_tournament_id ? 1 : 0,
       record.thread_id,
       record.parent_message_id,
       record.root_message_id,
+      record.thread_resolved ? 1 : 0,
+      record.thread_resolved_at,
+      record.thread_resolved_by_tournament_id,
+      record.thread_resolved_by_tournament_name,
       record.direction,
       record.timestamp,
       new Date().toISOString(),
@@ -982,10 +1111,22 @@ function rowToUnmatchedMessage(row: UnmatchedMessageRecordRow): UnmatchedMessage
     target_player_name: row.target_player_name,
     target_user_code: row.target_user_code,
     requested_tournament_id: row.requested_tournament_id,
+    match_card_id: row.match_card_id,
+    match_slot: row.match_slot,
+    remote_dq_target_player_id: row.remote_dq_target_player_id,
+    remote_dq_target_player_name: row.remote_dq_target_player_name,
+    remote_dq_target_user_code: row.remote_dq_target_user_code,
+    remote_dq_requested_by_tournament_id: row.remote_dq_requested_by_tournament_id,
+    remote_dq_requested_by_tournament_name: row.remote_dq_requested_by_tournament_name,
+    remote_dq_approved: row.remote_dq_approved === 1,
     is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
     thread_id: row.thread_id,
     parent_message_id: row.parent_message_id,
     root_message_id: row.root_message_id,
+    thread_resolved: row.thread_resolved === 1,
+    thread_resolved_at: row.thread_resolved_at,
+    thread_resolved_by_tournament_id: row.thread_resolved_by_tournament_id,
+    thread_resolved_by_tournament_name: row.thread_resolved_by_tournament_name,
     timestamp: row.timestamp,
     created_at: row.created_at,
   };
@@ -1008,14 +1149,20 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       id, event_code, source_tournament_id, source_tournament_db_id,
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
+      match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
+      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
       is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+      thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
       timestamp, created_at
     ) VALUES (
       $1, $2, $3, $4,
       $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14,
       $15, $16, $17, $18,
-      $19, $20
+      $19, $20, $21, $22,
+      $23, $24, $25, $26,
+      $27, $28, $29, $30,
+      $31, $32
     )`,
     [
       record.id,
@@ -1032,10 +1179,22 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       record.target_player_name,
       record.target_user_code,
       record.requested_tournament_id,
+      record.match_card_id,
+      record.match_slot,
+      record.remote_dq_target_player_id,
+      record.remote_dq_target_player_name,
+      record.remote_dq_target_user_code,
+      record.remote_dq_requested_by_tournament_id,
+      record.remote_dq_requested_by_tournament_name,
+      record.remote_dq_approved ? 1 : 0,
       record.is_duplicate_tournament_id ? 1 : 0,
       record.thread_id,
       record.parent_message_id,
       record.root_message_id,
+      record.thread_resolved ? 1 : 0,
+      record.thread_resolved_at,
+      record.thread_resolved_by_tournament_id,
+      record.thread_resolved_by_tournament_name,
       record.timestamp,
       record.created_at,
     ]

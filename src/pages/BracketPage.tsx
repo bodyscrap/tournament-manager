@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
 import { BracketSection } from "../components/bracket/BracketSection";
@@ -8,6 +8,7 @@ import type { DragState } from "../components/bracket/BracketSection";
 import type { Match, TournamentPlayer, MatchBracket, MatchActionConfirmerType } from "../lib/types";
 import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../lib/matchState";
 import { extractUserCode, normalizeEventCode } from "../lib/playerCode";
+import { buildMatchCardIdFromMatch } from "../lib/matchCardId";
 
 type SearchUiState = "all" | "ready" | "undecided" | "in_progress" | "completed";
 
@@ -20,6 +21,7 @@ type ScannedCodeInfo = {
 
 export function BracketPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { unreadReceivedCount } = useMessageNotification();
   const {
     tournament,
@@ -255,6 +257,46 @@ export function BracketPage() {
     setSideRandomizeNotice(null);
     setSideRandomizeNoticeVisible(false);
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("fromRemoteDq") !== "1") return;
+
+    const clearRemoteDqParams = () => {
+      navigate("/tournament/bracket", { replace: true });
+    };
+
+    const matchCardId = params.get("matchCardId")?.trim() ?? "";
+    const dqPlayerId = params.get("dqPlayerId")?.trim() ?? "";
+    const dqUserCode = params.get("dqUserCode")?.trim() ?? "";
+    if (!matchCardId || !dqPlayerId || !dqUserCode) {
+      clearRemoteDqParams();
+      return;
+    }
+
+    const targetMatch = tournamentMatches.find((m) => buildMatchCardIdFromMatch(m) === matchCardId);
+    if (!targetMatch) {
+      clearRemoteDqParams();
+      return;
+    }
+
+    const uiState = getUiMatchState(targetMatch, incomingBySlot);
+    const canPrefillRemoteDq = uiState === "ready" || uiState === "in_progress";
+    const isTargetPlayerOnCard =
+      targetMatch.player1_id === dqPlayerId || targetMatch.player2_id === dqPlayerId;
+
+    if (!canPrefillRemoteDq || !isTargetPlayerOnCard) {
+      clearRemoteDqParams();
+      return;
+    }
+
+    handleMatchClick(targetMatch);
+    setForcedLoserId(null);
+    setP1Dq(targetMatch.player1_id === dqPlayerId);
+    setP2Dq(targetMatch.player2_id === dqPlayerId);
+    setConfirmAuthCode(dqUserCode);
+    clearRemoteDqParams();
+  }, [location.search, tournamentMatches, navigate, incomingBySlot]);
 
   const computeNewWinner = (
     m: Match,
@@ -835,9 +877,18 @@ export function BracketPage() {
 
   const openCallMessageForPlayer = (playerId: string | null) => {
     if (!playerId || playerId.startsWith("dummy-")) return;
+    const selected = selectedMatch;
+    if (!selected) return;
+    const matchCardId = buildMatchCardIdFromMatch(selected);
+    const matchSlot = selected.player1_id === playerId ? 1 : selected.player2_id === playerId ? 2 : null;
+    if (!matchSlot) return;
     setDetailPlayerId(null);
     closeModal();
-    navigate(`/notification?compose=call&playerId=${encodeURIComponent(playerId)}`);
+    navigate(
+      `/notification?compose=call&playerId=${encodeURIComponent(playerId)}&matchCardId=${encodeURIComponent(
+        matchCardId
+      )}&matchSlot=${matchSlot}`
+    );
   };
 
   const renderParticipantDetailDialog = () => {

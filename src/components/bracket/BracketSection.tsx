@@ -1,6 +1,7 @@
 import React from "react";
 import type { Match, TournamentPlayer, MatchBracket } from "../../lib/types";
 import { buildIncomingBySlot, getUiMatchState, getUiMatchStateLabel } from "../../lib/matchState";
+import { buildMatchCardIdFromMatch } from "../../lib/matchCardId";
 
 export interface DragState {
   matchId: string;
@@ -189,6 +190,9 @@ function MatchCard({
     >
       <div className={`${statusBadgeClass} text-[11px] text-center font-medium py-0.5 rounded-t-md`}>
         {getUiMatchStateLabel(uiState)}
+      </div>
+      <div className="px-2 py-0.5 border-b border-gray-100 text-[10px] text-gray-500 font-mono bg-gray-50">
+        {buildMatchCardIdFromMatch(match)}
       </div>
       <div
         {...slot1Props}

@@ -140,6 +140,21 @@ type MessageNotificationContextValue = {
     targetPlayerName?: string;
     targetUserCode?: string;
     requestedTournamentId?: string;
+    matchCardId?: string;
+    matchSlot?: 1 | 2;
+    remoteDqTargetPlayerId?: string;
+    remoteDqTargetPlayerName?: string;
+    remoteDqTargetUserCode?: string;
+    remoteDqRequestedByTournamentId?: string;
+    remoteDqRequestedByTournamentName?: string;
+    remoteDqApproved?: boolean;
+    threadId?: string;
+    parentMessageId?: string;
+    rootMessageId?: string;
+    threadResolved?: boolean;
+    threadResolvedAt?: string;
+    threadResolvedByTournamentId?: string;
+    threadResolvedByTournamentName?: string;
   }) => Promise<void>;
 };
 
@@ -180,10 +195,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       target_player_name: message.targetPlayerName ?? null,
       target_user_code: message.targetUserCode ?? null,
       requested_tournament_id: message.requestedTournamentId ?? null,
+      match_card_id: message.matchCardId ?? null,
+      match_slot: message.matchSlot ?? null,
+      remote_dq_target_player_id: message.remoteDqTargetPlayerId ?? null,
+      remote_dq_target_player_name: message.remoteDqTargetPlayerName ?? null,
+      remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
+      remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
+      remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+      remote_dq_approved: message.remoteDqApproved ?? false,
       is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
       thread_id: message.threadId ?? message.messageId,
       parent_message_id: message.parentMessageId ?? null,
       root_message_id: message.rootMessageId ?? message.threadId ?? message.messageId,
+      thread_resolved: message.threadResolved ?? false,
+      thread_resolved_at: message.threadResolvedAt ?? null,
+      thread_resolved_by_tournament_id: message.threadResolvedByTournamentId ?? null,
+      thread_resolved_by_tournament_name: message.threadResolvedByTournamentName ?? null,
       direction,
       timestamp: message.sentAt ?? message.timestamp,
       created_at: nowIso(),
@@ -208,10 +235,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         target_player_name: message.targetPlayerName ?? null,
         target_user_code: message.targetUserCode ?? null,
         requested_tournament_id: message.requestedTournamentId ?? null,
+        match_card_id: message.matchCardId ?? null,
+        match_slot: message.matchSlot ?? null,
+        remote_dq_target_player_id: message.remoteDqTargetPlayerId ?? null,
+        remote_dq_target_player_name: message.remoteDqTargetPlayerName ?? null,
+        remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
+        remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
+        remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+        remote_dq_approved: message.remoteDqApproved ?? false,
         is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
         thread_id: message.threadId ?? message.messageId,
         parent_message_id: message.parentMessageId ?? null,
         root_message_id: message.rootMessageId ?? message.threadId ?? message.messageId,
+        thread_resolved: message.threadResolved ?? false,
+        thread_resolved_at: message.threadResolvedAt ?? null,
+        thread_resolved_by_tournament_id: message.threadResolvedByTournamentId ?? null,
+        thread_resolved_by_tournament_name: message.threadResolvedByTournamentName ?? null,
         direction,
         timestamp: message.sentAt ?? message.timestamp,
         created_at: nowIso(),
@@ -236,10 +275,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       target_player_name: message.targetPlayerName ?? null,
       target_user_code: message.targetUserCode ?? null,
       requested_tournament_id: message.requestedTournamentId ?? null,
+      match_card_id: message.matchCardId ?? null,
+      match_slot: message.matchSlot ?? null,
+      remote_dq_target_player_id: message.remoteDqTargetPlayerId ?? null,
+      remote_dq_target_player_name: message.remoteDqTargetPlayerName ?? null,
+      remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
+      remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
+      remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+      remote_dq_approved: message.remoteDqApproved ?? false,
       is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
       thread_id: message.threadId ?? message.messageId,
       parent_message_id: message.parentMessageId ?? null,
       root_message_id: message.rootMessageId ?? message.threadId ?? message.messageId,
+      thread_resolved: message.threadResolved ?? false,
+      thread_resolved_at: message.threadResolvedAt ?? null,
+      thread_resolved_by_tournament_id: message.threadResolvedByTournamentId ?? null,
+      thread_resolved_by_tournament_name: message.threadResolvedByTournamentName ?? null,
       timestamp: message.sentAt ?? message.timestamp,
       created_at: nowIso(),
     });
@@ -366,12 +417,24 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             targetPlayerName: record.target_player_name ?? undefined,
             targetUserCode: record.target_user_code ?? undefined,
             requestedTournamentId: record.requested_tournament_id ?? undefined,
+            matchCardId: record.match_card_id ?? undefined,
+            matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+            remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
+            remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
+            remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
+            remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
+            remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+            remoteDqApproved: record.remote_dq_approved,
             isDuplicateTournamentId: record.is_duplicate_tournament_id,
             threadId: record.thread_id ?? undefined,
             parentMessageId: record.parent_message_id ?? undefined,
             rootMessageId: record.root_message_id ?? undefined,
-              sentAt: record.timestamp,
-              receivedAt: record.created_at,
+            threadResolved: record.thread_resolved,
+            threadResolvedAt: record.thread_resolved_at ?? undefined,
+            threadResolvedByTournamentId: record.thread_resolved_by_tournament_id ?? undefined,
+            threadResolvedByTournamentName: record.thread_resolved_by_tournament_name ?? undefined,
+            sentAt: record.timestamp,
+            receivedAt: record.created_at,
             timestamp: record.timestamp,
           },
         }));
@@ -394,10 +457,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             targetPlayerName: record.target_player_name ?? undefined,
             targetUserCode: record.target_user_code ?? undefined,
             requestedTournamentId: record.requested_tournament_id ?? undefined,
+            matchCardId: record.match_card_id ?? undefined,
+            matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+            remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
+            remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
+            remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
+            remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
+            remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+            remoteDqApproved: record.remote_dq_approved,
             isDuplicateTournamentId: record.is_duplicate_tournament_id,
             threadId: record.thread_id ?? undefined,
             parentMessageId: record.parent_message_id ?? undefined,
             rootMessageId: record.root_message_id ?? undefined,
+            threadResolved: record.thread_resolved,
+            threadResolvedAt: record.thread_resolved_at ?? undefined,
+            threadResolvedByTournamentId: record.thread_resolved_by_tournament_id ?? undefined,
+            threadResolvedByTournamentName: record.thread_resolved_by_tournament_name ?? undefined,
             sentAt: record.timestamp,
             receivedAt: undefined,
             timestamp: record.timestamp,
@@ -420,10 +495,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           targetPlayerName: record.target_player_name ?? undefined,
           targetUserCode: record.target_user_code ?? undefined,
           requestedTournamentId: record.requested_tournament_id ?? undefined,
+          matchCardId: record.match_card_id ?? undefined,
+          matchSlot: record.match_slot === 1 || record.match_slot === 2 ? record.match_slot : undefined,
+          remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
+          remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
+          remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
+          remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
+          remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+          remoteDqApproved: record.remote_dq_approved,
           isDuplicateTournamentId: record.is_duplicate_tournament_id,
           threadId: record.thread_id ?? undefined,
           parentMessageId: record.parent_message_id ?? undefined,
           rootMessageId: record.root_message_id ?? undefined,
+          threadResolved: record.thread_resolved,
+          threadResolvedAt: record.thread_resolved_at ?? undefined,
+          threadResolvedByTournamentId: record.thread_resolved_by_tournament_id ?? undefined,
+          threadResolvedByTournamentName: record.thread_resolved_by_tournament_name ?? undefined,
           sentAt: record.timestamp,
           receivedAt: record.created_at,
           timestamp: record.timestamp,
@@ -545,6 +632,21 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       targetPlayerName?: string;
       targetUserCode?: string;
       requestedTournamentId?: string;
+      matchCardId?: string;
+      matchSlot?: 1 | 2;
+      remoteDqTargetPlayerId?: string;
+      remoteDqTargetPlayerName?: string;
+      remoteDqTargetUserCode?: string;
+      remoteDqRequestedByTournamentId?: string;
+      remoteDqRequestedByTournamentName?: string;
+      remoteDqApproved?: boolean;
+      threadId?: string;
+      parentMessageId?: string;
+      rootMessageId?: string;
+      threadResolved?: boolean;
+      threadResolvedAt?: string;
+      threadResolvedByTournamentId?: string;
+      threadResolvedByTournamentName?: string;
     }): Promise<void> => {
       if (!tournament) throw new Error("大会が選択されていません");
 
@@ -563,15 +665,30 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         targetPlayerName: input.targetPlayerName,
         targetUserCode: input.targetUserCode,
         requestedTournamentId: input.requestedTournamentId,
-        threadId: undefined,
-        parentMessageId: undefined,
-        rootMessageId: undefined,
+        matchCardId: input.matchCardId,
+        matchSlot: input.matchSlot,
+        remoteDqTargetPlayerId: input.remoteDqTargetPlayerId,
+        remoteDqTargetPlayerName: input.remoteDqTargetPlayerName,
+        remoteDqTargetUserCode: input.remoteDqTargetUserCode,
+        remoteDqRequestedByTournamentId: input.remoteDqRequestedByTournamentId,
+        remoteDqRequestedByTournamentName: input.remoteDqRequestedByTournamentName,
+        remoteDqApproved: input.remoteDqApproved,
+        threadId: input.threadId,
+        parentMessageId: input.parentMessageId,
+        rootMessageId: input.rootMessageId,
+        threadResolved: input.threadResolved,
+        threadResolvedAt: input.threadResolvedAt,
+        threadResolvedByTournamentId: input.threadResolvedByTournamentId,
+        threadResolvedByTournamentName: input.threadResolvedByTournamentName,
         sentAt: nowIso(),
         timestamp: nowIso(),
       };
 
-      message.threadId = message.messageId;
-      message.rootMessageId = message.messageId;
+      // 新規スレッドの場合（返信でない場合）
+      if (!input.threadId) {
+        message.threadId = message.messageId;
+        message.rootMessageId = message.messageId;
+      }
 
       // バウンスバック対策: 送信前に seenMessageIds へ登録しておく
       seenMessageIds.current.add(message.messageId);

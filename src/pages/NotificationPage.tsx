@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
-import type { ReceivedMessageEntry, SentMessageEntry } from "../hooks/useMessageNotification";
-import type { MessageAttribute } from "../lib/types/notification";
+import type { ReceivedMessageEntry, SentMessageEntry, UnmatchedMessageEntry } from "../hooks/useMessageNotification";
+import type { MessageAttribute, NotificationMessage } from "../lib/types/notification";
+import { extractUserCode } from "../lib/playerCode";
 
 const MAX_COMMENT_LEN = 300;
 
@@ -38,8 +39,34 @@ function attributeLabel(attribute: MessageAttribute): string {
       return "汎用";
     case "TOURNAMENT_ID_CHECK_RESULT":
       return "大会ID確認応答";
+    case "THREAD_RESOLVED":
+      return "解決通知";
+    case "REMOTE_DQ_REQUEST":
+      return "リモートDQ申請";
+    case "REMOTE_DQ_APPROVED":
+      return "リモートDQ承認";
     default:
       return attribute;
+  }
+}
+
+function attributeColor(attribute: MessageAttribute): string {
+  switch (attribute) {
+    case "CALL":
+      return "bg-red-100 text-red-700";
+    case "TOURNAMENT_ID_CHECK":
+    case "TOURNAMENT_ID_CHECK_RESULT":
+      return "bg-amber-100 text-amber-700";
+    case "GENERAL":
+      return "bg-blue-100 text-blue-700";
+    case "THREAD_RESOLVED":
+      return "bg-emerald-100 text-emerald-700";
+    case "REMOTE_DQ_REQUEST":
+      return "bg-rose-100 text-rose-700";
+    case "REMOTE_DQ_APPROVED":
+      return "bg-green-100 text-green-700";
+    default:
+      return "bg-gray-100 text-gray-700";
   }
 }
 
@@ -50,54 +77,330 @@ function parseTargetTournamentIds(value: string): string[] {
     .filter((v) => v.length > 0);
 }
 
-function MessageCard({ entry }: { entry: ReceivedMessageEntry | SentMessageEntry }) {
+function MessageListItem({
+  entry,
+  isSelected,
+  onClick,
+}: {
+  entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const message = entry.message;
+  const sentTime = message.sentAt ?? message.timestamp;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left p-3 border-b transition-colors ${
+        isSelected
+          ? "bg-blue-50 border-blue-200"
+          : "bg-white hover:bg-gray-50 border-gray-200"
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${attributeColor(message.attribute)}`}>
+          {attributeLabel(message.attribute)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-gray-900 truncate text-sm">{message.title}</p>
+          <p className="text-xs text-gray-500 mt-0.5 truncate">
+            送信元: {message.eventId}-{message.sourceTournamentId}
+          </p>
+          {message.matchCardId && (
+            <p className="text-[11px] text-gray-500 mt-0.5 truncate">カード: {message.matchCardId}</p>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-gray-400 mt-1 text-right">{fmtTime(sentTime)}</p>
+    </button>
+  );
+}
+
+function ReplyForm({
+  message,
+  onSend,
+  onCancel,
+  isSending,
+}: {
+  message: NotificationMessage;
+  onSend: (comment: string) => Promise<void>;
+  onCancel: () => void;
+  isSending: boolean;
+}) {
+  const [comment, setComment] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSubmit = async () => {
+    setError("");
+    const trimmedComment = comment.trim();
+    if (!trimmedComment) {
+      setError("返信内容を入力してください");
+      return;
+    }
+    if (trimmedComment.length > MAX_COMMENT_LEN) {
+      setError("返信は 300 文字以下で入力してください");
+      return;
+    }
+
+    try {
+      await onSend(trimmedComment);
+      setComment("");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-200 p-4 bg-gray-50">
+      <h3 className="text-sm font-medium text-gray-700 mb-3">スレッドに返信</h3>
+      <div className="space-y-2">
+        <textarea
+          rows={3}
+          placeholder="返信を入力..."
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          value={comment}
+          onChange={(e) => setComment(e.target.value.slice(0, MAX_COMMENT_LEN))}
+          disabled={isSending}
+        />
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-xs text-gray-400">{comment.length} / {MAX_COMMENT_LEN}</p>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-60"
+            disabled={isSending}
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+            disabled={isSending}
+          >
+            {isSending ? "送信中..." : "返信"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageDetailView({
+  entry,
+  isReceived,
+  onReply,
+  isThreadResolved,
+  canResolveThread,
+  onResolveThread,
+  resolvingThread,
+  canRequestRemoteDq,
+  canApproveRemoteDq,
+  requestingRemoteDq,
+  approvingRemoteDq,
+  onRequestRemoteDq,
+  onApproveRemoteDq,
+}: {
+  entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry | null;
+  isReceived: boolean;
+  onReply: (parentMessage: NotificationMessage, replyBody: string) => Promise<void>;
+  isThreadResolved: boolean;
+  canResolveThread: boolean;
+  onResolveThread: (message: NotificationMessage) => Promise<void>;
+  resolvingThread: boolean;
+  canRequestRemoteDq: boolean;
+  canApproveRemoteDq: boolean;
+  requestingRemoteDq: boolean;
+  approvingRemoteDq: boolean;
+  onRequestRemoteDq: (message: NotificationMessage, enteredUserCode: string) => Promise<void>;
+  onApproveRemoteDq: (requestMessage: NotificationMessage) => Promise<void>;
+}) {
+  const [showReplyForm, setShowReplyForm] = useState(false);
+  const [replySending, setReplySending] = useState(false);
+  const [dqCodeInput, setDqCodeInput] = useState("");
+  const [dqError, setDqError] = useState("");
+
+  if (!entry) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-400">
+        <p className="text-sm">メッセージを選択してください</p>
+      </div>
+    );
+  }
+
   const message = entry.message;
   const sentTime = message.sentAt ?? message.timestamp;
   const receivedTime = message.receivedAt;
+  const isGeneralMessage =
+    message.attribute === "GENERAL" ||
+    message.attribute === "REMOTE_DQ_REQUEST" ||
+    message.attribute === "REMOTE_DQ_APPROVED";
+  const canReply = isGeneralMessage && !isThreadResolved;
+
+  const handleReply = async (comment: string) => {
+    setReplySending(true);
+    try {
+      await onReply(message, comment);
+      setShowReplyForm(false);
+    } finally {
+      setReplySending(false);
+    }
+  };
+
+  const handleRequestRemoteDq = async () => {
+    setDqError("");
+    const raw = dqCodeInput.trim();
+    if (!raw) {
+      setDqError("ユーザーコードを入力してください");
+      return;
+    }
+    try {
+      await onRequestRemoteDq(message, raw);
+      setDqCodeInput("");
+    } catch (e) {
+      setDqError(String(e));
+    }
+  };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-              {attributeLabel(message.attribute)}
+    <div className="h-full flex flex-col bg-white">
+      {/* ヘッダー */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${attributeColor(message.attribute)}`}>
+            {attributeLabel(message.attribute)}
+          </span>
+          {isThreadResolved && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">
+              解決済み
             </span>
-            <p className="font-semibold text-gray-900 truncate">{message.title}</p>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            送信元: <span className="font-mono">{message.eventId}-{message.sourceTournamentId}</span>
-            {" "}({message.sourceTournamentName})
-          </p>
-          {message.targetTournamentIds && message.targetTournamentIds.length > 0 && (
-            <p className="text-xs text-gray-500 mt-0.5">
-              宛先大会ID: <span className="font-mono">{message.targetTournamentIds.join(", ")}</span>
-            </p>
+          )}
+          <h2 className="text-lg font-bold text-gray-900 flex-1">{message.title}</h2>
+          {canResolveThread && !isThreadResolved && (
+            <button
+              onClick={() => {
+                void onResolveThread(message);
+              }}
+              className="px-2 py-1 text-xs rounded-lg border border-emerald-300 hover:bg-emerald-50 text-emerald-700 disabled:opacity-60"
+              disabled={resolvingThread}
+            >
+              {resolvingThread ? "処理中..." : "スレッドを解決"}
+            </button>
+          )}
+          {canApproveRemoteDq && (
+            <button
+              onClick={() => {
+                void onApproveRemoteDq(message);
+              }}
+              className="px-2 py-1 text-xs rounded-lg border border-green-300 hover:bg-green-50 text-green-700 disabled:opacity-60"
+              disabled={approvingRemoteDq}
+            >
+              {approvingRemoteDq ? "承認中..." : "DQ申請を承認"}
+            </button>
+          )}
+          {canReply && (
+            <button
+              onClick={() => setShowReplyForm(!showReplyForm)}
+              className="px-2 py-1 text-xs rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600"
+            >
+              {showReplyForm ? "キャンセル" : "返信"}
+            </button>
           )}
         </div>
-        <p className="text-xs text-gray-400 shrink-0">{fmtTime(sentTime)}</p>
+
+        <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 mt-3">
+          <div>
+            <p className="text-gray-400 text-xs">送信元</p>
+            <p className="font-mono">
+              {message.eventId}-{message.sourceTournamentId} ({message.sourceTournamentName})
+            </p>
+          </div>
+          {message.targetTournamentIds && message.targetTournamentIds.length > 0 && (
+            <div>
+              <p className="text-gray-400 text-xs">宛先</p>
+              <p className="font-mono">{message.targetTournamentIds.join(", ")}</p>
+            </div>
+          )}
+          {message.matchCardId && (
+            <div>
+              <p className="text-gray-400 text-xs">カードID</p>
+              <p className="font-mono">{message.matchCardId}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-gray-400 text-xs">送信日時</p>
+            <p className="font-mono">{fmtTime(sentTime)}</p>
+          </div>
+          {receivedTime && (
+            <div>
+              <p className="text-gray-400 text-xs">受信日時</p>
+              <p className="font-mono">{fmtTime(receivedTime)}</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-        <p>
-          送信: <span className="font-mono">{fmtTime(sentTime)}</span>
-        </p>
-        {receivedTime && (
-          <p>
-            受信: <span className="font-mono">{fmtTime(receivedTime)}</span>
-          </p>
+      {/* コンテンツ */}
+      <div className={`${showReplyForm ? "" : "flex-1"} overflow-y-auto p-4 space-y-4`}>
+        <div>
+          <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">メッセージ本文</h3>
+          <pre className="text-sm text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg p-3 font-sans">
+            {message.body}
+          </pre>
+        </div>
+
+        {message.comment && (
+          <div>
+            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">通信欄</h3>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg p-3">
+              {message.comment}
+            </p>
+          </div>
+        )}
+
+        {canRequestRemoteDq && (
+          <div>
+            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">リモートDQ申請</h3>
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 space-y-2">
+              <p className="text-xs text-rose-800">
+                呼び出し対象のユーザーコードを入力してDQ申請を送信します。
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={dqCodeInput}
+                  onChange={(e) => setDqCodeInput(e.target.value)}
+                  placeholder="対象プレイヤーのユーザーコード"
+                  className="flex-1 border border-rose-300 rounded px-2 py-1 text-xs font-mono"
+                  disabled={requestingRemoteDq}
+                />
+                <button
+                  onClick={() => {
+                    void handleRequestRemoteDq();
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60"
+                  disabled={requestingRemoteDq}
+                >
+                  {requestingRemoteDq ? "送信中..." : "DQ申請"}
+                </button>
+              </div>
+              {dqError && <p className="text-xs text-rose-700">{dqError}</p>}
+            </div>
+          </div>
         )}
       </div>
 
-      <pre className="mt-3 text-sm text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg p-3">
-        {message.body}
-      </pre>
-
-      {message.comment && (
-        <div className="mt-2 text-sm text-gray-700">
-          <p className="text-xs text-gray-400 mb-1">通信欄</p>
-          <p className="whitespace-pre-wrap break-words">{message.comment}</p>
-        </div>
+      {/* 返信フォーム */}
+      {showReplyForm && canReply && (
+        <ReplyForm
+          message={message}
+          onSend={handleReply}
+          onCancel={() => setShowReplyForm(false)}
+          isSending={replySending}
+        />
       )}
     </div>
   );
@@ -112,6 +415,8 @@ function NewMessageDialog({
   initialKind,
   initialSelectedPlayerId,
   initialComment,
+  initialMatchCardId,
+  initialMatchSlot,
   onSend,
   onClose,
 }: {
@@ -123,6 +428,8 @@ function NewMessageDialog({
   initialKind?: ComposeKind;
   initialSelectedPlayerId?: string;
   initialComment?: string;
+  initialMatchCardId?: string;
+  initialMatchSlot?: 1 | 2;
   onSend: (input: {
     attribute: MessageAttribute;
     title: string;
@@ -133,6 +440,8 @@ function NewMessageDialog({
     targetPlayerName?: string;
     targetUserCode?: string;
     requestedTournamentId?: string;
+    matchCardId?: string;
+    matchSlot?: 1 | 2;
   }) => Promise<void>;
   onClose: () => void;
 }) {
@@ -202,6 +511,8 @@ function NewMessageDialog({
           targetPlayerId: selectedPlayer.playerId,
           targetPlayerName: selectedPlayer.name,
           targetUserCode: selectedPlayer.userCode,
+          matchCardId: initialMatchCardId,
+          matchSlot: initialMatchSlot,
         });
         onClose();
         return;
@@ -403,7 +714,13 @@ export function NotificationPage() {
     kind?: ComposeKind;
     selectedPlayerId?: string;
     comment?: string;
+    matchCardId?: string;
+    matchSlot?: 1 | 2;
   } | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [resolvingThread, setResolvingThread] = useState(false);
+  const [requestingRemoteDq, setRequestingRemoteDq] = useState(false);
+  const [approvingRemoteDq, setApprovingRemoteDq] = useState(false);
 
   const playerOptions = useMemo<PlayerOption[]>(() => {
     return [...participants]
@@ -416,6 +733,85 @@ export function NotificationPage() {
       }));
   }, [participants]);
 
+  const messages = useMemo(() => {
+    switch (tab) {
+      case "received":
+        return receivedMessages;
+      case "sent":
+        return sentMessages;
+      case "unmatched":
+        return unmatchedMessages;
+    }
+  }, [tab, receivedMessages, sentMessages, unmatchedMessages]);
+
+  const allMessages = useMemo(() => {
+    return [...receivedMessages, ...sentMessages, ...unmatchedMessages].map((entry) => entry.message);
+  }, [receivedMessages, sentMessages, unmatchedMessages]);
+
+  const selectedMessage = useMemo(() => {
+    return messages.find((m) => m.message.messageId === selectedMessageId) || null;
+  }, [messages, selectedMessageId]);
+
+  const selectedThreadId = selectedMessage?.message.threadId ?? selectedMessage?.message.messageId ?? null;
+
+  const resolvedThreadMap = useMemo(() => {
+    const resolved = new Map<string, NotificationMessage>();
+    for (const message of allMessages) {
+      const threadId = message.threadId ?? message.messageId;
+      const isResolvedEvent = message.attribute === "THREAD_RESOLVED" || message.threadResolved === true;
+      if (!isResolvedEvent) continue;
+
+      const prev = resolved.get(threadId);
+      if (!prev) {
+        resolved.set(threadId, message);
+        continue;
+      }
+
+      const prevTs = new Date(prev.threadResolvedAt ?? prev.sentAt ?? prev.timestamp).getTime();
+      const currentTs = new Date(message.threadResolvedAt ?? message.sentAt ?? message.timestamp).getTime();
+      if (currentTs >= prevTs) {
+        resolved.set(threadId, message);
+      }
+    }
+    return resolved;
+  }, [allMessages]);
+
+  const selectedRootMessage = useMemo(() => {
+    if (!selectedMessage) return null;
+    const current = selectedMessage.message;
+    const rootMessageId = current.rootMessageId ?? current.threadId ?? current.messageId;
+    return allMessages.find((message) => message.messageId === rootMessageId) ?? null;
+  }, [allMessages, selectedMessage]);
+
+  const isSelectedThreadResolved = selectedThreadId ? resolvedThreadMap.has(selectedThreadId) : false;
+  const canResolveSelectedThread = !!(
+    selectedRootMessage &&
+    tournament &&
+    selectedRootMessage.sourceTournamentId === tournament.tournament_code
+  );
+  const canRequestRemoteDq = !!(
+    selectedRootMessage &&
+    selectedRootMessage.attribute === "CALL" &&
+    selectedRootMessage.targetUserCode &&
+    selectedRootMessage.matchCardId &&
+    selectedRootMessage.matchSlot &&
+    !isSelectedThreadResolved
+  );
+  const canApproveRemoteDq = !!(
+    selectedMessage &&
+    selectedMessage.message.attribute === "REMOTE_DQ_REQUEST" &&
+    selectedRootMessage &&
+    tournament &&
+    selectedRootMessage.sourceTournamentId === tournament.tournament_code &&
+    !isSelectedThreadResolved
+  );
+
+  useEffect(() => {
+    if (messages.length > 0 && !selectedMessageId) {
+      setSelectedMessageId(messages[0].message.messageId);
+    }
+  }, [messages, selectedMessageId]);
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("compose") !== "call") return;
@@ -424,10 +820,156 @@ export function NotificationPage() {
       kind: "CALL",
       selectedPlayerId: params.get("playerId") ?? undefined,
       comment: params.get("comment") ?? undefined,
+      matchCardId: params.get("matchCardId") ?? undefined,
+      matchSlot: params.get("matchSlot") === "1" ? 1 : params.get("matchSlot") === "2" ? 2 : undefined,
     });
     setShowCompose(true);
     navigate("/notification", { replace: true });
   }, [location.search, navigate]);
+
+  const handleReply = async (parentMessage: NotificationMessage, replyBody: string) => {
+    if (!tournament) throw new Error("大会が選択されていません");
+
+    // スレッド情報の取得
+    const threadId = parentMessage.threadId ?? parentMessage.messageId;
+    const rootMessageId = parentMessage.rootMessageId ?? parentMessage.threadId ?? parentMessage.messageId;
+    const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
+    const replyTargetTournamentId = rootMessage?.sourceTournamentId ?? parentMessage.sourceTournamentId;
+
+    await sendMessage({
+      attribute: "GENERAL",
+      title: `Re: ${parentMessage.title}`,
+      body: replyBody,
+      comment: undefined,
+      targetTournamentIds: [replyTargetTournamentId],
+      threadId,
+      parentMessageId: parentMessage.messageId,
+      rootMessageId,
+    });
+  };
+
+  const handleResolveThread = async (baseMessage: NotificationMessage) => {
+    if (!tournament) throw new Error("大会が選択されていません");
+
+    const threadId = baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessageId = baseMessage.rootMessageId ?? baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
+
+    if (!rootMessage || rootMessage.sourceTournamentId !== tournament.tournament_code) {
+      throw new Error("スレッド主のみ解決できます");
+    }
+    if (resolvedThreadMap.has(threadId)) {
+      return;
+    }
+
+    const resolvedAt = new Date().toISOString();
+    setResolvingThread(true);
+    try {
+      await sendMessage({
+        attribute: "THREAD_RESOLVED",
+        title: `[解決] ${rootMessage.title}`,
+        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がスレッドを解決しました。`,
+        comment: undefined,
+        targetTournamentIds: undefined,
+        threadId,
+        parentMessageId: baseMessage.messageId,
+        rootMessageId,
+        threadResolved: true,
+        threadResolvedAt: resolvedAt,
+        threadResolvedByTournamentId: tournament.tournament_code,
+        threadResolvedByTournamentName: tournament.name,
+      });
+    } finally {
+      setResolvingThread(false);
+    }
+  };
+
+  const handleRequestRemoteDq = async (baseMessage: NotificationMessage, enteredUserCode: string) => {
+    if (!tournament) throw new Error("大会が選択されていません");
+
+    const threadId = baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessageId = baseMessage.rootMessageId ?? baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
+    if (!rootMessage) throw new Error("スレッド先頭メッセージが見つかりません");
+    if (rootMessage.attribute !== "CALL") throw new Error("呼び出しスレッドでのみDQ申請できます");
+
+    const expected = extractUserCode(rootMessage.targetUserCode ?? "");
+    const actual = extractUserCode(enteredUserCode);
+    if (!expected || !actual || expected !== actual) {
+      throw new Error("ユーザーコードが一致しません");
+    }
+    if (!rootMessage.sourceTournamentId) throw new Error("スレッド主が不明です");
+    if (!rootMessage.matchCardId || !rootMessage.matchSlot || !rootMessage.targetPlayerId) {
+      throw new Error("呼び出しカード情報が不足しています");
+    }
+
+    setRequestingRemoteDq(true);
+    try {
+      await sendMessage({
+        attribute: "REMOTE_DQ_REQUEST",
+        title: `DQ申請: ${rootMessage.title}`,
+        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がDQを申請しました。`,
+        targetTournamentIds: [rootMessage.sourceTournamentId],
+        threadId,
+        parentMessageId: baseMessage.messageId,
+        rootMessageId,
+        matchCardId: rootMessage.matchCardId,
+        matchSlot: rootMessage.matchSlot,
+        remoteDqTargetPlayerId: rootMessage.targetPlayerId,
+        remoteDqTargetPlayerName: rootMessage.targetPlayerName,
+        remoteDqTargetUserCode: actual,
+        remoteDqRequestedByTournamentId: tournament.tournament_code,
+        remoteDqRequestedByTournamentName: tournament.name,
+      });
+    } finally {
+      setRequestingRemoteDq(false);
+    }
+  };
+
+  const handleApproveRemoteDq = async (requestMessage: NotificationMessage) => {
+    if (!tournament) throw new Error("大会が選択されていません");
+
+    const threadId = requestMessage.threadId ?? requestMessage.messageId;
+    const rootMessageId = requestMessage.rootMessageId ?? requestMessage.threadId ?? requestMessage.messageId;
+    const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
+
+    if (!rootMessage || rootMessage.sourceTournamentId !== tournament.tournament_code) {
+      throw new Error("スレッド主のみ承認できます");
+    }
+    if (!requestMessage.matchCardId || !requestMessage.remoteDqTargetPlayerId || !requestMessage.remoteDqTargetUserCode) {
+      throw new Error("承認に必要な情報が不足しています");
+    }
+    const requestFromTournamentId = requestMessage.remoteDqRequestedByTournamentId ?? requestMessage.sourceTournamentId;
+    if (!requestFromTournamentId) throw new Error("申請元大会が不明です");
+
+    setApprovingRemoteDq(true);
+    try {
+      await sendMessage({
+        attribute: "REMOTE_DQ_APPROVED",
+        title: `DQ承認: ${rootMessage.title}`,
+        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がDQ申請を承認しました。`,
+        targetTournamentIds: [requestFromTournamentId],
+        threadId,
+        parentMessageId: requestMessage.messageId,
+        rootMessageId,
+        matchCardId: requestMessage.matchCardId,
+        matchSlot: requestMessage.matchSlot,
+        remoteDqTargetPlayerId: requestMessage.remoteDqTargetPlayerId,
+        remoteDqTargetPlayerName: requestMessage.remoteDqTargetPlayerName,
+        remoteDqTargetUserCode: requestMessage.remoteDqTargetUserCode,
+        remoteDqApproved: true,
+      });
+
+      const params = new URLSearchParams();
+      params.set("matchCardId", requestMessage.matchCardId);
+      params.set("dqPlayerId", requestMessage.remoteDqTargetPlayerId);
+      params.set("dqUserCode", requestMessage.remoteDqTargetUserCode);
+      params.set("fromRemoteDq", "1");
+      navigate(`/tournament/bracket?${params.toString()}`);
+    } finally {
+      setApprovingRemoteDq(false);
+    }
+  };
 
   if (!tournament) {
     return (
@@ -438,8 +980,9 @@ export function NotificationPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="h-full flex flex-col bg-white">
+      {/* ヘッダー */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
         <div>
           <h1 className="text-xl font-bold text-gray-900">📢 メッセージ</h1>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -458,65 +1001,84 @@ export function NotificationPage() {
         </button>
       </div>
 
-      <div className="flex gap-1 mb-5 bg-gray-100 rounded-xl p-1">
+      {/* タブ */}
+      <div className="flex gap-1 px-6 py-4 bg-gray-100 border-b border-gray-200">
         <button
-          onClick={() => setTab("received")}
-          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-            tab === "received" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+          onClick={() => {
+            setTab("received");
+            setSelectedMessageId(null);
+          }}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            tab === "received" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
           }`}
         >
           受信したメッセージ
         </button>
         <button
-          onClick={() => setTab("sent")}
-          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-            tab === "sent" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+          onClick={() => {
+            setTab("sent");
+            setSelectedMessageId(null);
+          }}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            tab === "sent" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
           }`}
         >
           自分が送信したメッセージ
         </button>
         <button
-          onClick={() => setTab("unmatched")}
-          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-            tab === "unmatched" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+          onClick={() => {
+            setTab("unmatched");
+            setSelectedMessageId(null);
+          }}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            tab === "unmatched" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
           }`}
         >
           未受理メッセージ
         </button>
       </div>
 
-      {tab === "received" && (
-        <div className="space-y-3">
-          {receivedMessages.length === 0 && (
-            <p className="text-center text-gray-400 py-12 text-sm">受信したメッセージはありません</p>
+      {/* メインコンテンツ */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* メッセージリスト */}
+        <div className="w-80 border-r border-gray-200 flex flex-col bg-white">
+          {messages.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              <p className="text-sm">メッセージがありません</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              {messages.map((entry) => (
+                <MessageListItem
+                  key={entry.message.messageId}
+                  entry={entry}
+                  isSelected={selectedMessage?.message.messageId === entry.message.messageId}
+                  onClick={() => setSelectedMessageId(entry.message.messageId)}
+                />
+              ))}
+            </div>
           )}
-          {receivedMessages.map((entry) => (
-            <MessageCard key={entry.message.messageId} entry={entry} />
-          ))}
         </div>
-      )}
 
-      {tab === "sent" && (
-        <div className="space-y-3">
-          {sentMessages.length === 0 && (
-            <p className="text-center text-gray-400 py-12 text-sm">送信したメッセージはありません</p>
-          )}
-          {sentMessages.map((entry) => (
-            <MessageCard key={entry.message.messageId} entry={entry} />
-          ))}
+        {/* メッセージ詳細 */}
+        <div className="flex-1 overflow-hidden">
+          <MessageDetailView
+            entry={selectedMessage}
+            isReceived={tab === "received"}
+            onReply={handleReply}
+            isThreadResolved={isSelectedThreadResolved}
+            canResolveThread={canResolveSelectedThread}
+            onResolveThread={handleResolveThread}
+            resolvingThread={resolvingThread}
+            canRequestRemoteDq={canRequestRemoteDq}
+            canApproveRemoteDq={canApproveRemoteDq}
+            requestingRemoteDq={requestingRemoteDq}
+            approvingRemoteDq={approvingRemoteDq}
+            onRequestRemoteDq={handleRequestRemoteDq}
+            onApproveRemoteDq={handleApproveRemoteDq}
+          />
         </div>
-      )}
-
-      {tab === "unmatched" && (
-        <div className="space-y-3">
-          {unmatchedMessages.length === 0 && (
-            <p className="text-center text-gray-400 py-12 text-sm">未受理メッセージはありません</p>
-          )}
-          {unmatchedMessages.map((entry) => (
-            <MessageCard key={entry.message.messageId} entry={entry} />
-          ))}
-        </div>
-      )}
+      </div>
 
       {showCompose && (
         <NewMessageDialog
@@ -528,6 +1090,8 @@ export function NotificationPage() {
           initialKind={composePreset?.kind}
           initialSelectedPlayerId={composePreset?.selectedPlayerId}
           initialComment={composePreset?.comment}
+          initialMatchCardId={composePreset?.matchCardId}
+          initialMatchSlot={composePreset?.matchSlot}
           onSend={sendMessage}
           onClose={() => {
             setShowCompose(false);
