@@ -625,7 +625,7 @@ export function TournamentUsersPage() {
 
       {previewRow && !isUserCardAccessBlocked && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-xl p-4">
+          <div className="allow-text-select w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-xl p-4">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h3 className="font-semibold text-gray-800">{previewRow.userName}</h3>

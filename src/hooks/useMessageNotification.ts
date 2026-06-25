@@ -17,6 +17,8 @@ import type {
 } from "../lib/types/notification";
 import { useAppContext } from "../context/AppContext";
 import {
+  deleteTournamentMessageThread,
+  deleteUnmatchedMessageThread,
   getTournamentMessages,
   getUnmatchedMessages,
   insertUnmatchedMessage,
@@ -136,6 +138,10 @@ function matchesTournamentDestination(
   return targets.includes(normalizedCode) || targets.includes(normalizedId);
 }
 
+function resolveThreadManagementId(message: NotificationMessage): string {
+  return message.rootMessageId ?? message.threadId ?? message.messageId;
+}
+
 // ─────────────────────────────────────────
 // State types (exported for use in UI)
 // ─────────────────────────────────────────
@@ -172,9 +178,27 @@ type NotificationAction =
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage }
   | { type: "ADD_UNMATCHED_MESSAGE"; message: NotificationMessage }
   | { type: "MARK_RECEIVED_READ"; messageId: string }
-  | { type: "MARK_ALL_RECEIVED_READ" };
+  | { type: "MARK_ALL_RECEIVED_READ" }
+  | {
+      type: "DELETE_THREADS";
+      tab: "received" | "sent" | "unmatched";
+      threadIds: string[];
+    };
 
 function reducer(state: NotificationState, action: NotificationAction): NotificationState {
+  const isInThread = (message: NotificationMessage, threadIds: Set<string>): boolean => {
+    for (const threadId of threadIds) {
+      if (
+        message.messageId === threadId ||
+        message.threadId === threadId ||
+        message.rootMessageId === threadId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   switch (action.type) {
     case "RECEIVE_MESSAGE":
       {
@@ -231,6 +255,42 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         unreadReceivedCount: 0,
       };
 
+    case "DELETE_THREADS": {
+      if (action.threadIds.length === 0) return state;
+      const threadIdSet = new Set(action.threadIds);
+
+      if (action.tab === "unmatched") {
+        return {
+          ...state,
+          unmatchedMessages: state.unmatchedMessages.filter(
+            (entry) => !isInThread(entry.message, threadIdSet)
+          ),
+        };
+      }
+
+      if (action.tab === "received") {
+        const nextReceived = state.receivedMessages.filter(
+          (entry) => !isInThread(entry.message, threadIdSet)
+        );
+        const nextUnreadIds = nextReceived
+          .map((entry) => entry.message.messageId)
+          .filter((messageId) => state.unreadReceivedMessageIds.includes(messageId));
+        return {
+          ...state,
+          receivedMessages: nextReceived,
+          unreadReceivedMessageIds: nextUnreadIds,
+          unreadReceivedCount: nextUnreadIds.length,
+        };
+      }
+
+      return {
+        ...state,
+        sentMessages: state.sentMessages.filter(
+          (entry) => !isInThread(entry.message, threadIdSet)
+        ),
+      };
+    }
+
     default:
       return state;
   }
@@ -268,6 +328,7 @@ type MessageNotificationContextValue = {
     remoteDqTargetUserCode?: string;
     remoteDqRequestedByTournamentId?: string;
     remoteDqRequestedByTournamentName?: string;
+    remoteDqForAllMatches?: boolean;
     remoteDqApproved?: boolean;
     threadId?: string;
     parentMessageId?: string;
@@ -277,6 +338,10 @@ type MessageNotificationContextValue = {
     threadResolvedByTournamentId?: string;
     threadResolvedByTournamentName?: string;
   }) => Promise<void>;
+  deleteThreads: (
+    tab: "received" | "sent" | "unmatched",
+    threadIds: string[]
+  ) => Promise<void>;
 };
 
 const MessageNotificationContext = createContext<MessageNotificationContextValue | null>(null);
@@ -286,11 +351,12 @@ const MessageNotificationContext = createContext<MessageNotificationContextValue
 // ─────────────────────────────────────────
 
 export function MessageNotificationProvider({ children }: { children: ReactNode }) {
-  const { tournament, tournamentList } = useAppContext();
+  const { tournament, tournamentList, networkMessageSettings } = useAppContext();
   const [state, dispatch] = useReducer(reducer, initialState);
   const previousTournamentIdRef = useRef<string | null>(null);
   const lastSeenByTournamentRef = useRef<LastSeenByTournament>(loadLastSeenByTournament());
   const readMessageIdsByTournamentRef = useRef<ReadMessageIdsByTournament>(loadReadMessageIdsByTournament());
+  const deletedThreadIdsRef = useRef<Set<string>>(new Set());
 
   /**
    * 処理済み messageId の Set。
@@ -325,6 +391,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
       remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
       remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+      remote_dq_for_all_matches: message.remoteDqForAllMatches ?? false,
       remote_dq_approved: message.remoteDqApproved ?? false,
       is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
       thread_id: message.threadId ?? message.messageId,
@@ -365,6 +432,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
         remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
         remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+        remote_dq_for_all_matches: message.remoteDqForAllMatches ?? false,
         remote_dq_approved: message.remoteDqApproved ?? false,
         is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
         thread_id: message.threadId ?? message.messageId,
@@ -405,6 +473,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
       remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
       remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+      remote_dq_for_all_matches: message.remoteDqForAllMatches ?? false,
       remote_dq_approved: message.remoteDqApproved ?? false,
       is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
       thread_id: message.threadId ?? message.messageId,
@@ -422,6 +491,15 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
   const broadcast = useCallback(async (payload: MessagePayload) => {
     await invoke<void>("send_udp_broadcast", { payload: JSON.stringify(payload) });
   }, []);
+
+  useEffect(() => {
+    void invoke<void>("configure_udp_network", {
+      subnet_mask: networkMessageSettings.subnetMask,
+      port: networkMessageSettings.port,
+    }).catch((error) => {
+      console.error("[UDP] Failed to apply UDP network settings", error);
+    });
+  }, [networkMessageSettings.subnetMask, networkMessageSettings.port]);
 
   const notifyIncomingMessage = useCallback((message: NotificationMessage) => {
     if (!("Notification" in window)) return;
@@ -546,7 +624,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       }
 
       const records = await getTournamentMessages(tournament.id);
-      const unmatchedRecords = await getUnmatchedMessages();
+      const unmatchedRecords = networkMessageSettings.saveUnmatchedMessages
+        ? await getUnmatchedMessages()
+        : [];
       const readMessageIds = new Set(readMessageIdsByTournamentRef.current[tournament.id] ?? []);
       const received = records
         .filter((record) => record.direction === "received")
@@ -573,6 +653,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
             remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
             remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+            remoteDqForAllMatches: record.remote_dq_for_all_matches,
             remoteDqApproved: record.remote_dq_approved,
             isDuplicateTournamentId: record.is_duplicate_tournament_id,
             threadId: record.thread_id ?? undefined,
@@ -616,6 +697,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
             remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
             remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+            remoteDqForAllMatches: record.remote_dq_for_all_matches,
             remoteDqApproved: record.remote_dq_approved,
             isDuplicateTournamentId: record.is_duplicate_tournament_id,
             threadId: record.thread_id ?? undefined,
@@ -654,6 +736,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
           remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
           remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+          remoteDqForAllMatches: record.remote_dq_for_all_matches,
           remoteDqApproved: record.remote_dq_approved,
           isDuplicateTournamentId: record.is_duplicate_tournament_id,
           threadId: record.thread_id ?? undefined,
@@ -716,6 +799,14 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             return matchesTournamentDestination(t, targets);
           });
 
+          const threadManagementId = resolveThreadManagementId(message);
+          if (deletedThreadIdsRef.current.has(threadManagementId)) {
+            message.threadId = threadManagementId;
+            message.rootMessageId = threadManagementId;
+            message.parentMessageId = undefined;
+            deletedThreadIdsRef.current.delete(threadManagementId);
+          }
+
           if (
             tournament &&
             isSameIdentifier(tournament.event_code, message.eventId) &&
@@ -729,9 +820,11 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           message.sentAt = message.sentAt ?? message.timestamp;
 
           if (acceptedTournaments.length === 0) {
-            await persistUnmatchedMessage(message);
-            if (tournament) {
-              dispatch({ type: "ADD_UNMATCHED_MESSAGE", message });
+            if (networkMessageSettings.saveUnmatchedMessages) {
+              await persistUnmatchedMessage(message);
+              if (tournament) {
+                dispatch({ type: "ADD_UNMATCHED_MESSAGE", message });
+              }
             }
             return;
           }
@@ -774,6 +867,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     persistMessageForTournament,
     persistUnmatchedMessage,
     notifyIncomingMessage,
+    networkMessageSettings.saveUnmatchedMessages,
   ]);
 
   useEffect(() => {
@@ -804,6 +898,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       remoteDqTargetUserCode?: string;
       remoteDqRequestedByTournamentId?: string;
       remoteDqRequestedByTournamentName?: string;
+      remoteDqForAllMatches?: boolean;
       remoteDqApproved?: boolean;
       threadId?: string;
       parentMessageId?: string;
@@ -842,6 +937,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         remoteDqTargetUserCode: input.remoteDqTargetUserCode,
         remoteDqRequestedByTournamentId: input.remoteDqRequestedByTournamentId,
         remoteDqRequestedByTournamentName: input.remoteDqRequestedByTournamentName,
+        remoteDqForAllMatches: input.remoteDqForAllMatches,
         remoteDqApproved: input.remoteDqApproved,
         threadId: normalizedThreadId,
         parentMessageId: input.parentMessageId,
@@ -869,6 +965,34 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     [tournament, broadcast, persistMessage]
   );
 
+  const deleteThreads = useCallback(
+    async (tab: "received" | "sent" | "unmatched", threadIds: string[]): Promise<void> => {
+      const normalizedThreadIds = [...new Set(threadIds.map((id) => id.trim()).filter((id) => !!id))];
+      if (normalizedThreadIds.length === 0) return;
+
+      if (tab === "unmatched") {
+        for (const threadId of normalizedThreadIds) {
+          deletedThreadIdsRef.current.add(threadId);
+        }
+        await Promise.all(normalizedThreadIds.map((threadId) => deleteUnmatchedMessageThread(threadId)));
+        dispatch({ type: "DELETE_THREADS", tab, threadIds: normalizedThreadIds });
+        return;
+      }
+
+      if (!tournament) throw new Error("大会が選択されていません");
+      for (const threadId of normalizedThreadIds) {
+        deletedThreadIdsRef.current.add(threadId);
+      }
+      await Promise.all(
+        normalizedThreadIds.map((threadId) =>
+          deleteTournamentMessageThread(tournament.id, threadId)
+        )
+      );
+      dispatch({ type: "DELETE_THREADS", tab, threadIds: normalizedThreadIds });
+    },
+    [tournament]
+  );
+
   return createElement(
     MessageNotificationContext.Provider,
     {
@@ -881,6 +1005,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           state.unreadReceivedMessageIds.includes(messageId),
         markReceivedMessageRead,
         sendMessage,
+        deleteThreads,
       },
     },
     children
@@ -901,6 +1026,7 @@ export function useMessageNotification() {
     isReceivedMessageUnread: context.isReceivedMessageUnread,
     markReceivedMessageRead: context.markReceivedMessageRead,
     sendMessage: context.sendMessage,
+    deleteThreads: context.deleteThreads,
   };
 }
 

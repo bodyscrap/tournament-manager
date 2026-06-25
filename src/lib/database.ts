@@ -98,6 +98,7 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
       remote_dq_target_user_code TEXT,
       remote_dq_requested_by_tournament_id TEXT,
       remote_dq_requested_by_tournament_name TEXT,
+      remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0,
       remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
       is_duplicate_tournament_id INTEGER,
       thread_id             TEXT,
@@ -127,6 +128,7 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
   try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_target_user_code TEXT`); } catch {}
   try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_requested_by_tournament_id TEXT`); } catch {}
   try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_requested_by_tournament_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { await db.execute(`ALTER TABLE tournament_messages ADD COLUMN remote_dq_approved INTEGER NOT NULL DEFAULT 0`); } catch {}
   try {
     await db.execute(`ALTER TABLE tournament_messages ADD COLUMN thread_resolved INTEGER NOT NULL DEFAULT 0`);
@@ -184,6 +186,7 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
           remote_dq_target_user_code TEXT,
           remote_dq_requested_by_tournament_id TEXT,
           remote_dq_requested_by_tournament_name TEXT,
+          remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0,
           remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
           is_duplicate_tournament_id INTEGER,
           thread_id             TEXT,
@@ -205,7 +208,7 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
           source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
           target_player_id, target_player_name, target_user_code, requested_tournament_id,
           match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
-          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
+          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_for_all_matches, remote_dq_approved,
           is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
           thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
           direction, timestamp, created_at
@@ -215,7 +218,7 @@ async function ensureTournamentMessagesTable(db: Database): Promise<void> {
           source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
           target_player_id, target_player_name, target_user_code, requested_tournament_id,
           match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
-          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, COALESCE(remote_dq_approved, 0),
+          remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, COALESCE(remote_dq_for_all_matches, 0), COALESCE(remote_dq_approved, 0),
           is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
           COALESCE(thread_resolved, 0), thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
           direction, timestamp, created_at
@@ -253,6 +256,7 @@ async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
       remote_dq_target_user_code TEXT,
       remote_dq_requested_by_tournament_id TEXT,
       remote_dq_requested_by_tournament_name TEXT,
+      remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0,
       remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
       is_duplicate_tournament_id INTEGER,
       thread_id             TEXT,
@@ -279,6 +283,7 @@ async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
   try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_target_user_code TEXT`); } catch {}
   try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_requested_by_tournament_id TEXT`); } catch {}
   try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_requested_by_tournament_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN remote_dq_approved INTEGER NOT NULL DEFAULT 0`); } catch {}
   try {
     await db.execute(`ALTER TABLE unmatched_messages ADD COLUMN thread_resolved_at TEXT`);
@@ -1022,6 +1027,7 @@ function rowToTournamentMessage(row: TournamentMessageRecordRow): TournamentMess
     remote_dq_target_user_code: row.remote_dq_target_user_code,
     remote_dq_requested_by_tournament_id: row.remote_dq_requested_by_tournament_id,
     remote_dq_requested_by_tournament_name: row.remote_dq_requested_by_tournament_name,
+    remote_dq_for_all_matches: row.remote_dq_for_all_matches === 1,
     remote_dq_approved: row.remote_dq_approved === 1,
     is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
     thread_id: row.thread_id,
@@ -1056,7 +1062,7 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
       match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
-      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
+      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_for_all_matches, remote_dq_approved,
       is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
       thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
       direction, timestamp, created_at
@@ -1065,10 +1071,10 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       $6, $7, $8, $9, $10, $11,
       $12, $13, $14, $15,
       $16, $17, $18, $19,
-      $20, $21, $22, $23,
-      $24, $25, $26, $27,
-      $28, $29, $30, $31,
-      $32, $33, $34
+      $20, $21, $22, $23, $24,
+      $25, $26, $27, $28,
+      $29, $30, $31, $32,
+      $33, $34, $35
     )`,
     [
       record.id,
@@ -1093,6 +1099,7 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       record.remote_dq_target_user_code,
       record.remote_dq_requested_by_tournament_id,
       record.remote_dq_requested_by_tournament_name,
+      record.remote_dq_for_all_matches ? 1 : 0,
       record.remote_dq_approved ? 1 : 0,
       record.is_duplicate_tournament_id ? 1 : 0,
       record.thread_id,
@@ -1106,6 +1113,20 @@ export async function insertTournamentMessage(record: TournamentMessageRecord): 
       record.timestamp,
       new Date().toISOString(),
     ]
+  );
+}
+
+export async function deleteTournamentMessageThread(
+  tournament_id: string,
+  thread_id: string
+): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentMessagesTable(db);
+  await db.execute(
+    `DELETE FROM tournament_messages
+     WHERE tournament_id = $1
+       AND (id = $2 OR thread_id = $2 OR root_message_id = $2)`,
+    [tournament_id, thread_id]
   );
 }
 
@@ -1146,6 +1167,7 @@ function rowToUnmatchedMessage(row: UnmatchedMessageRecordRow): UnmatchedMessage
     remote_dq_target_user_code: row.remote_dq_target_user_code,
     remote_dq_requested_by_tournament_id: row.remote_dq_requested_by_tournament_id,
     remote_dq_requested_by_tournament_name: row.remote_dq_requested_by_tournament_name,
+    remote_dq_for_all_matches: row.remote_dq_for_all_matches === 1,
     remote_dq_approved: row.remote_dq_approved === 1,
     is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
     thread_id: row.thread_id,
@@ -1178,7 +1200,7 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
       target_player_id, target_player_name, target_user_code, requested_tournament_id,
       match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
-      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_approved,
+      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_for_all_matches, remote_dq_approved,
       is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
       thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
       timestamp, created_at
@@ -1187,10 +1209,10 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14,
       $15, $16, $17, $18,
-      $19, $20, $21, $22,
-      $23, $24, $25, $26,
-      $27, $28, $29, $30,
-      $31, $32
+      $19, $20, $21, $22, $23,
+      $24, $25, $26, $27,
+      $28, $29, $30, $31,
+      $32, $33
     )`,
     [
       record.id,
@@ -1214,6 +1236,7 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       record.remote_dq_target_user_code,
       record.remote_dq_requested_by_tournament_id,
       record.remote_dq_requested_by_tournament_name,
+      record.remote_dq_for_all_matches ? 1 : 0,
       record.remote_dq_approved ? 1 : 0,
       record.is_duplicate_tournament_id ? 1 : 0,
       record.thread_id,
@@ -1226,6 +1249,16 @@ export async function insertUnmatchedMessage(record: UnmatchedMessageRecord): Pr
       record.timestamp,
       record.created_at,
     ]
+  );
+}
+
+export async function deleteUnmatchedMessageThread(thread_id: string): Promise<void> {
+  const db = await getDb();
+  await ensureUnmatchedMessagesTable(db);
+  await db.execute(
+    `DELETE FROM unmatched_messages
+     WHERE id = $1 OR thread_id = $1 OR root_message_id = $1`,
+    [thread_id]
   );
 }
 

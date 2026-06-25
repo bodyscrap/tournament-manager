@@ -8,6 +8,7 @@ import { TournamentSetupPage } from "./pages/TournamentSetupPage";
 import { BracketPage } from "./pages/BracketPage";
 import { TournamentUsersPage } from "./pages/TournamentUsersPage";
 import { NotificationPage } from "./pages/NotificationPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { MessageNotificationProvider } from "./hooks/useMessageNotification";
 
 function AppShell() {
@@ -39,6 +40,7 @@ function AppShell() {
             <Route path="/tournament/player-cards" element={<TournamentUsersPage />} />
             <Route path="/tournament/admins" element={<TournamentUsersPage />} />
             <Route path="/notification" element={<NotificationPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </div>
       </main>

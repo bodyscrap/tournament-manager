@@ -237,6 +237,7 @@ export interface TournamentMessageRecord {
   remote_dq_target_user_code: string | null;
   remote_dq_requested_by_tournament_id: string | null;
   remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: boolean;
   remote_dq_approved: boolean;
   is_duplicate_tournament_id: boolean;
   thread_id: string | null;
@@ -274,6 +275,7 @@ export interface TournamentMessageRecordRow {
   remote_dq_target_user_code: string | null;
   remote_dq_requested_by_tournament_id: string | null;
   remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: number | null;
   remote_dq_approved: number | null;
   is_duplicate_tournament_id: number | null;
   thread_id: string | null;
@@ -310,6 +312,7 @@ export interface UnmatchedMessageRecord {
   remote_dq_target_user_code: string | null;
   remote_dq_requested_by_tournament_id: string | null;
   remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: boolean;
   remote_dq_approved: boolean;
   is_duplicate_tournament_id: boolean;
   thread_id: string | null;
@@ -345,6 +348,7 @@ export interface UnmatchedMessageRecordRow {
   remote_dq_target_user_code: string | null;
   remote_dq_requested_by_tournament_id: string | null;
   remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: number | null;
   remote_dq_approved: number | null;
   is_duplicate_tournament_id: number | null;
   thread_id: string | null;

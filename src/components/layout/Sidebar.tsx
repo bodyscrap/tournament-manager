@@ -11,6 +11,7 @@ const navItems = [
   { to: "/character-lists", label: "アイテムリスト", icon: "📚" },
   { to: "/tournament/users", label: "ユーザーリスト", icon: "👥" },
   { to: "/notification", label: "メッセージ", icon: "📢" },
+  { to: "/settings", label: "設定", icon: "🔧" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {

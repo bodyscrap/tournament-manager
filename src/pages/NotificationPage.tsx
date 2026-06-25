@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
@@ -87,6 +87,12 @@ function parseTargetTournamentIds(value: string): string[] {
     .filter((v) => v.length > 0);
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
 function MessageListItem({
   entry,
   isSelected,
@@ -100,7 +106,7 @@ function MessageListItem({
   isThreadResolved: boolean;
   compact?: boolean;
   withHandleSpace?: boolean;
-  onClick: () => void;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const message = entry.message;
   const sentTime = message.sentAt ?? message.timestamp;
@@ -235,7 +241,11 @@ function MessageDetailView({
   requestingRemoteDq: boolean;
   approvingRemoteDq: boolean;
   remoteDqExpectedUserCode?: string;
-  onRequestRemoteDq: (message: NotificationMessage, enteredUserCode: string) => Promise<void>;
+  onRequestRemoteDq: (
+    message: NotificationMessage,
+    enteredUserCode: string,
+    forAllMatches: boolean
+  ) => Promise<void>;
   onApproveRemoteDq: (requestMessage: NotificationMessage) => Promise<void>;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -243,6 +253,7 @@ function MessageDetailView({
   const [dqCodeInput, setDqCodeInput] = useState("");
   const [dqError, setDqError] = useState("");
   const [dqVerifiedCode, setDqVerifiedCode] = useState<string | null>(null);
+  const [remoteForfeitAllMatches, setRemoteForfeitAllMatches] = useState(false);
   const [showDqQrScan, setShowDqQrScan] = useState(false);
   const [showResolveForm, setShowResolveForm] = useState(false);
   const [resolveComment, setResolveComment] = useState("");
@@ -270,6 +281,7 @@ function MessageDetailView({
     setDqCodeInput("");
     setDqError("");
     setDqVerifiedCode(null);
+    setRemoteForfeitAllMatches(false);
     setShowDqQrScan(false);
     setShowResolveForm(false);
     setResolveComment("");
@@ -307,9 +319,10 @@ function MessageDetailView({
       return;
     }
     try {
-      await onRequestRemoteDq(message, dqVerifiedCode);
+      await onRequestRemoteDq(message, dqVerifiedCode, remoteForfeitAllMatches);
       setDqCodeInput("");
       setDqVerifiedCode(null);
+      setRemoteForfeitAllMatches(false);
     } catch (e) {
       setDqError(String(e));
     }
@@ -495,6 +508,29 @@ function MessageDetailView({
               <p className="text-xs text-rose-800">
                 呼び出し対象のユーザーコードを認証すると、棄権申請を送信できます。
               </p>
+              <div className="rounded border border-rose-200 bg-white p-2">
+                <p className="text-xs font-medium text-rose-800 mb-1">棄権の種類</p>
+                <label className="flex items-center gap-2 text-xs text-rose-800">
+                  <input
+                    type="radio"
+                    name="remote-forfeit-mode"
+                    checked={!remoteForfeitAllMatches}
+                    onChange={() => setRemoteForfeitAllMatches(false)}
+                    disabled={requestingRemoteDq}
+                  />
+                  この試合を棄権
+                </label>
+                <label className="flex items-center gap-2 text-xs text-rose-800 mt-1">
+                  <input
+                    type="radio"
+                    name="remote-forfeit-mode"
+                    checked={remoteForfeitAllMatches}
+                    onChange={() => setRemoteForfeitAllMatches(true)}
+                    disabled={requestingRemoteDq}
+                  />
+                  全試合を棄権
+                </label>
+              </div>
               <div className="flex gap-2">
                 <input
                   type="password"
@@ -533,6 +569,9 @@ function MessageDetailView({
                 {canSubmitRemoteDq
                   ? "認証OK: 呼び出しメッセージのユーザーコードと一致しました"
                   : "未認証: コード入力またはカメラ読取で認証してください"}
+              </p>
+              <p className="text-xs text-rose-800">
+                送信内容: {remoteForfeitAllMatches ? "全試合を棄権" : "この試合を棄権"}
               </p>
               {dqError && <p className="text-xs text-rose-700">{dqError}</p>}
             </div>
@@ -878,12 +917,13 @@ function NewMessageDialog({
 export function NotificationPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { tournament, participants } = useAppContext();
+  const { tournament, participants, networkMessageSettings } = useAppContext();
   const {
     receivedMessages,
     sentMessages,
     unmatchedMessages,
     sendMessage,
+    deleteThreads,
     isReceivedMessageUnread,
     markReceivedMessageRead,
   } = useMessageNotification();
@@ -898,6 +938,8 @@ export function NotificationPage() {
     matchSlot?: 1 | 2;
   } | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+  const [threadSelectionAnchorIndex, setThreadSelectionAnchorIndex] = useState<number | null>(null);
   const [expandedThreadIds, setExpandedThreadIds] = useState<Set<string>>(new Set());
   const [resolvingThread, setResolvingThread] = useState(false);
   const [requestingRemoteDq, setRequestingRemoteDq] = useState(false);
@@ -999,11 +1041,15 @@ export function NotificationPage() {
         const tb = new Date(b.message.sentAt ?? b.message.timestamp).getTime();
         return tb - ta;
       });
+      const sortedByOldest = [...entries].sort((a, b) => {
+        const ta = new Date(a.message.sentAt ?? a.message.timestamp).getTime();
+        const tb = new Date(b.message.sentAt ?? b.message.timestamp).getTime();
+        return ta - tb;
+      });
       const latestEntry = sortedByLatest[0];
       const rootEntry =
-        sortedByLatest.find((entry) => entry.message.messageId === threadId) ??
-        sortedByLatest.find((entry) => entry.message.rootMessageId === threadId) ??
-        sortedByLatest.find((entry) => entry.message.threadId === threadId) ??
+        sortedByOldest.find((entry) => entry.message.messageId === threadId) ??
+        sortedByOldest[0] ??
         null;
       const latestTime = new Date(latestEntry.message.sentAt ?? latestEntry.message.timestamp).getTime();
 
@@ -1065,8 +1111,6 @@ export function NotificationPage() {
 
     const explicitRoot =
       inThread.find((message) => message.messageId === selectedThreadId) ??
-      inThread.find((message) => message.rootMessageId === selectedThreadId) ??
-      inThread.find((message) => message.threadId === selectedThreadId) ??
       null;
 
     if (explicitRoot) return explicitRoot;
@@ -1113,6 +1157,23 @@ export function NotificationPage() {
   }, [messages, selectedMessageId]);
 
   useEffect(() => {
+    const threadIds = new Set(threadGroups.map((group) => group.threadId));
+    setSelectedThreadIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (threadIds.has(id)) next.add(id);
+      }
+      return next;
+    });
+    setThreadSelectionAnchorIndex((prev) => {
+      if (prev == null) return null;
+      if (prev < 0 || prev >= threadGroups.length) return null;
+      return prev;
+    });
+  }, [threadGroups]);
+
+  useEffect(() => {
     if (tab !== "received" || !selectedMessage) return;
     const selectedId = selectedMessage.message.messageId;
     if (!isReceivedMessageUnread(selectedId)) return;
@@ -1156,6 +1217,117 @@ export function NotificationPage() {
     setShowCompose(true);
     navigate("/notification", { replace: true });
   }, [location.search, navigate]);
+
+  const selectThreadByInteraction = (
+    event: MouseEvent<HTMLButtonElement>,
+    threadId: string,
+    index: number,
+    messageId: string
+  ) => {
+    setSelectedMessageId(messageId);
+
+    if (event.shiftKey && threadSelectionAnchorIndex != null) {
+      const start = Math.min(threadSelectionAnchorIndex, index);
+      const end = Math.max(threadSelectionAnchorIndex, index);
+      const rangeIds = threadGroups.slice(start, end + 1).map((group) => group.threadId);
+      setSelectedThreadIds((prev) => {
+        const next = event.ctrlKey || event.metaKey ? new Set(prev) : new Set<string>();
+        for (const id of rangeIds) next.add(id);
+        return next;
+      });
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedThreadIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(threadId)) {
+          next.delete(threadId);
+        } else {
+          next.add(threadId);
+        }
+        return next;
+      });
+      setThreadSelectionAnchorIndex(index);
+      return;
+    }
+
+    setSelectedThreadIds(new Set([threadId]));
+    setThreadSelectionAnchorIndex(index);
+  };
+
+  const selectedThreadGroupList = useMemo(() => {
+    if (selectedThreadIds.size === 0) return [] as ThreadGroup[];
+    return threadGroups.filter((group) => selectedThreadIds.has(group.threadId));
+  }, [threadGroups, selectedThreadIds]);
+
+  const resolvedThreadIds = useMemo(
+    () => threadGroups.filter((group) => resolvedThreadMap.has(group.threadId)).map((group) => group.threadId),
+    [threadGroups, resolvedThreadMap]
+  );
+
+  const unresolvedSelectedThreadCount = useMemo(() => {
+    return selectedThreadGroupList.filter((group) => !resolvedThreadMap.has(group.threadId)).length;
+  }, [selectedThreadGroupList, resolvedThreadMap]);
+
+  const canDeleteSelectedThreads = selectedThreadGroupList.length > 0 && !(
+    networkMessageSettings.preventUnresolvedThreadDeletion && unresolvedSelectedThreadCount > 0
+  );
+
+  const handleDeleteSelectedThreads = async () => {
+    if (selectedThreadGroupList.length === 0) return;
+
+    if (networkMessageSettings.preventUnresolvedThreadDeletion && unresolvedSelectedThreadCount > 0) {
+      alert("未解決スレッドが選択されているため削除できません");
+      return;
+    }
+
+    const confirmMessage = `選択中の ${selectedThreadGroupList.length} スレッドを削除しますか？`;
+    if (!window.confirm(confirmMessage)) return;
+
+    const targetThreadIds = selectedThreadGroupList.map((group) => group.threadId);
+    await deleteThreads(tab, targetThreadIds);
+
+    setSelectedThreadIds(new Set());
+    setThreadSelectionAnchorIndex(null);
+    setSelectedMessageId(null);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      const withModifier = event.ctrlKey || event.metaKey;
+
+      if (withModifier && key === "a") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          const allIds = threadGroups.map((group) => group.threadId);
+          setSelectedThreadIds(new Set(allIds));
+          setThreadSelectionAnchorIndex(allIds.length > 0 ? 0 : null);
+          return;
+        }
+
+        setSelectedThreadIds(new Set(resolvedThreadIds));
+        if (resolvedThreadIds.length === 0) {
+          setThreadSelectionAnchorIndex(null);
+          return;
+        }
+        const firstResolvedIndex = threadGroups.findIndex((group) => group.threadId === resolvedThreadIds[0]);
+        setThreadSelectionAnchorIndex(firstResolvedIndex >= 0 ? firstResolvedIndex : null);
+        return;
+      }
+
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedThreadIds.size > 0) {
+        event.preventDefault();
+        void handleDeleteSelectedThreads();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [handleDeleteSelectedThreads, resolvedThreadIds, selectedThreadIds.size, threadGroups]);
 
   const handleReply = async (parentMessage: NotificationMessage, replyBody: string) => {
     if (!tournament) throw new Error("大会が選択されていません");
@@ -1214,7 +1386,11 @@ export function NotificationPage() {
     }
   };
 
-  const handleRequestRemoteDq = async (baseMessage: NotificationMessage, enteredUserCode: string) => {
+  const handleRequestRemoteDq = async (
+    baseMessage: NotificationMessage,
+    enteredUserCode: string,
+    forAllMatches: boolean
+  ) => {
     if (!tournament) throw new Error("大会が選択されていません");
 
     const threadId = baseMessage.threadId ?? baseMessage.messageId;
@@ -1239,9 +1415,9 @@ export function NotificationPage() {
     try {
       await sendMessage({
         attribute: "REMOTE_DQ_REQUEST",
-        title: `棄権申請: ${rootMessage.title}`,
+        title: `${forAllMatches ? "全試合棄権申請" : "棄権申請"}: ${rootMessage.title}`,
         body:
-          `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が棄権を申請しました。\n` +
+          `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が${forAllMatches ? "全試合棄権" : "この試合の棄権"}を申請しました。\n` +
           `対象カードID: ${rootMessage.matchCardId}\n` +
           `対象プレイヤーID: ${rootMessage.targetPlayerId}\n` +
           `対象プレイヤー名: ${rootMessage.targetPlayerName ?? "(不明)"}`,
@@ -1256,6 +1432,7 @@ export function NotificationPage() {
         remoteDqTargetUserCode: actual,
         remoteDqRequestedByTournamentId: tournament.tournament_code,
         remoteDqRequestedByTournamentName: tournament.name,
+        remoteDqForAllMatches: forAllMatches,
       });
     } finally {
       setRequestingRemoteDq(false);
@@ -1284,8 +1461,10 @@ export function NotificationPage() {
     try {
       await sendMessage({
         attribute: "REMOTE_DQ_APPROVED",
-        title: `棄権承認: ${rootMessage.title}`,
-        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が棄権申請を承認しました。`,
+        title: `${requestMessage.remoteDqForAllMatches ? "全試合棄権承認" : "棄権承認"}: ${rootMessage.title}`,
+        body:
+          `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が` +
+          `${requestMessage.remoteDqForAllMatches ? "全試合棄権申請" : "棄権申請"}を承認しました。`,
         targetTournamentIds: approvalTargets,
         threadId,
         parentMessageId: requestMessage.messageId,
@@ -1295,6 +1474,7 @@ export function NotificationPage() {
         remoteDqTargetPlayerId: requestMessage.remoteDqTargetPlayerId,
         remoteDqTargetPlayerName: requestMessage.remoteDqTargetPlayerName,
         remoteDqTargetUserCode: requestMessage.remoteDqTargetUserCode,
+        remoteDqForAllMatches: requestMessage.remoteDqForAllMatches,
         remoteDqApproved: true,
       });
 
@@ -1302,6 +1482,7 @@ export function NotificationPage() {
       params.set("matchCardId", requestMessage.matchCardId);
       params.set("dqPlayerId", requestMessage.remoteDqTargetPlayerId);
       params.set("dqUserCode", requestMessage.remoteDqTargetUserCode);
+      params.set("forfeitAllMatches", requestMessage.remoteDqForAllMatches ? "1" : "0");
       params.set("fromRemoteDq", "1");
       navigate(`/tournament/bracket?${params.toString()}`);
     } finally {
@@ -1345,6 +1526,8 @@ export function NotificationPage() {
           onClick={() => {
             setTab("received");
             setSelectedMessageId(null);
+            setSelectedThreadIds(new Set());
+            setThreadSelectionAnchorIndex(null);
             setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -1357,6 +1540,8 @@ export function NotificationPage() {
           onClick={() => {
             setTab("sent");
             setSelectedMessageId(null);
+            setSelectedThreadIds(new Set());
+            setThreadSelectionAnchorIndex(null);
             setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -1369,6 +1554,8 @@ export function NotificationPage() {
           onClick={() => {
             setTab("unmatched");
             setSelectedMessageId(null);
+            setSelectedThreadIds(new Set());
+            setThreadSelectionAnchorIndex(null);
             setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -1383,13 +1570,31 @@ export function NotificationPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* メッセージリスト */}
         <div className="w-80 border-r border-gray-200 flex flex-col bg-white">
+          <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 space-y-2">
+            <div className="flex items-center justify-between gap-2 text-xs text-gray-600">
+              <span className="text-xs text-gray-600">
+                選択中: {selectedThreadGroupList.length} / {threadGroups.length}
+              </span>
+              <span>Delete: 選択削除</span>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              Ctrl+A: 解決済み全スレッドを選択 / Ctrl+Shift+A: 全スレッドを選択
+            </p>
+            {networkMessageSettings.preventUnresolvedThreadDeletion && unresolvedSelectedThreadCount > 0 && (
+              <p className="text-[11px] text-red-600">未解決スレッドが含まれるため削除できません</p>
+            )}
+            {!canDeleteSelectedThreads && selectedThreadGroupList.length > 0 && (
+              <p className="text-[11px] text-gray-500">削除可能な選択状態にしてから Delete を押してください</p>
+            )}
+          </div>
+
           {messages.length === 0 ? (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               <p className="text-sm">メッセージがありません</p>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              {threadGroups.map((group) => {
+              {threadGroups.map((group, index) => {
                 const representative = group.rootEntry ?? group.latestEntry;
                 const representativeId = representative.message.messageId;
                 const hasChildren = group.entries.length > 1;
@@ -1411,10 +1616,12 @@ export function NotificationPage() {
                       <MessageListItem
                         key={representativeId}
                         entry={representative}
-                        isSelected={selectedMessage?.message.messageId === representativeId}
+                        isSelected={selectedThreadIds.has(group.threadId)}
                         isThreadResolved={isThreadResolved}
                         withHandleSpace={hasChildren}
-                        onClick={() => setSelectedMessageId(representativeId)}
+                        onClick={(event) =>
+                          selectThreadByInteraction(event, group.threadId, index, representativeId)
+                        }
                       />
 
                       {hasChildren && (
@@ -1450,10 +1657,17 @@ export function NotificationPage() {
                           <div key={entry.message.messageId} className="ml-5 border-l-4 border-blue-200 bg-slate-50">
                             <MessageListItem
                               entry={entry}
-                              isSelected={selectedMessage?.message.messageId === entry.message.messageId}
+                              isSelected={selectedThreadIds.has(group.threadId)}
                               isThreadResolved={isThreadResolved}
                               compact
-                              onClick={() => setSelectedMessageId(entry.message.messageId)}
+                              onClick={(event) =>
+                                selectThreadByInteraction(
+                                  event,
+                                  group.threadId,
+                                  index,
+                                  entry.message.messageId
+                                )
+                              }
                             />
                           </div>
                         ))}

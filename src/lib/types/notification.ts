@@ -84,6 +84,7 @@ export interface NotificationMessage {
   remoteDqTargetUserCode?: string;
   remoteDqRequestedByTournamentId?: string;
   remoteDqRequestedByTournamentName?: string;
+  remoteDqForAllMatches?: boolean;
 
   /** リモートDQ承認用 */
   remoteDqApproved?: boolean;

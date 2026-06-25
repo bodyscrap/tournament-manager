@@ -51,6 +51,8 @@ export function BracketPage() {
   const [p2CharName, setP2CharName] = useState("");
   const [p1Forfeit, setP1Forfeit] = useState(false);
   const [p2Forfeit, setP2Forfeit] = useState(false);
+  const [forfeitAllMatches, setForfeitAllMatches] = useState(false);
+  const [forfeitDialogSlot, setForfeitDialogSlot] = useState<1 | 2 | null>(null);
   const [dqLoserId, setDqLoserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingEdit, setConfirmingEdit] = useState(false);
@@ -284,6 +286,8 @@ export function BracketPage() {
     setP2CharName(p2DefaultChar ?? "");
     setP1Forfeit(!!match.player1_id && match.forfeit_player_id === match.player1_id);
     setP2Forfeit(!!match.player2_id && match.forfeit_player_id === match.player2_id);
+    setForfeitAllMatches(false);
+    setForfeitDialogSlot(null);
     setDqLoserId(null);
     setConfirmAuthCode("");
     setAuthenticatedPlayerIds([]);
@@ -311,7 +315,8 @@ export function BracketPage() {
     const matchCardId = params.get("matchCardId")?.trim() ?? "";
     const dqPlayerId = params.get("dqPlayerId")?.trim() ?? "";
     const dqUserCode = params.get("dqUserCode")?.trim() ?? "";
-    const remoteDqQueryKey = `${matchCardId}|${dqPlayerId}|${dqUserCode}`;
+    const remoteForfeitAllMatches = params.get("forfeitAllMatches") === "1";
+    const remoteDqQueryKey = `${matchCardId}|${dqPlayerId}|${dqUserCode}|${remoteForfeitAllMatches ? "1" : "0"}`;
 
     if (handledRemoteDqQueryRef.current === remoteDqQueryKey) {
       return;
@@ -344,6 +349,7 @@ export function BracketPage() {
     setDqLoserId(null);
     setP1Forfeit(targetMatch.player1_id === dqPlayerId);
     setP2Forfeit(targetMatch.player2_id === dqPlayerId);
+    setForfeitAllMatches(remoteForfeitAllMatches);
     setConfirmAuthCode(dqUserCode);
     const autoAuth = authenticateCodeForMatch(targetMatch, dqUserCode, { silent: true });
     if (!autoAuth.ok) {
@@ -617,6 +623,7 @@ export function BracketPage() {
     ].filter((id): id is string => !!id);
     const hasDqLoss = !!dqLoserId;
     const forfeitPlayerIds = hasDqLoss ? [] : rawForfeitPlayerIds;
+    const forfeitAllMatchPlayerIds = hasDqLoss || !forfeitAllMatches ? [] : rawForfeitPlayerIds;
     const appliedDqLoserId = hasDqLoss ? dqLoserId : null;
     let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; forfeitConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null };
     try {
@@ -652,7 +659,8 @@ export function BracketPage() {
           appliedDqLoserId,
           p1CharName.trim() || null,
           p2CharName.trim() || null,
-          scoreAuth
+          scoreAuth,
+          forfeitAllMatchPlayerIds
         );
         closeModal();
       } finally {
@@ -680,7 +688,8 @@ export function BracketPage() {
         appliedDqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
-        scoreAuth
+        scoreAuth,
+        forfeitAllMatchPlayerIds
       );
       closeModal();
     } finally {
@@ -708,7 +717,8 @@ export function BracketPage() {
         pendingEdit.dqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
-        scoreAuth
+        scoreAuth,
+        forfeitAllMatches ? pendingEdit.forfeitPlayerIds : []
       );
       closeModal();
     } finally {
@@ -739,7 +749,8 @@ export function BracketPage() {
         pendingBye.dqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
-        scoreAuth
+        scoreAuth,
+        forfeitAllMatches ? pendingBye.forfeitPlayerIds : []
       );
       closeModal();
     } finally {
@@ -868,7 +879,33 @@ export function BracketPage() {
     // DQは通常結果入力/棄権とは排他的に扱う
     setP1Forfeit(false);
     setP2Forfeit(false);
+    setForfeitAllMatches(false);
+    setForfeitDialogSlot(null);
     setDqLoserId(loserId ?? null);
+  };
+
+  const applyForfeitWithDialog = (slot: 1 | 2) => {
+    if (!selectedMatch) return;
+    const current = slot === 1 ? p1Forfeit : p2Forfeit;
+    if (current) {
+      if (slot === 1) setP1Forfeit(false);
+      else setP2Forfeit(false);
+      if ((slot === 1 && !p2Forfeit) || (slot === 2 && !p1Forfeit)) {
+        setForfeitAllMatches(false);
+      }
+      return;
+    }
+
+    setDqLoserId(null);
+    setForfeitAllMatches(false);
+    setForfeitDialogSlot(slot);
+  };
+
+  const confirmForfeitSelection = () => {
+    if (!forfeitDialogSlot) return;
+    if (forfeitDialogSlot === 1) setP1Forfeit(true);
+    if (forfeitDialogSlot === 2) setP2Forfeit(true);
+    setForfeitDialogSlot(null);
   };
 
   const closeModal = () => {
@@ -878,6 +915,8 @@ export function BracketPage() {
     setConfirmingBye(false);
     setPendingBye(null);
     setDqLoserId(null);
+    setForfeitAllMatches(false);
+    setForfeitDialogSlot(null);
     setConfirmAuthCode("");
     setAuthenticatedPlayerIds([]);
     setAuthenticatedAdminIds([]);
@@ -1418,6 +1457,8 @@ export function BracketPage() {
                   const p1Authenticated = !!selectedMatch.player1_id && authenticatedPlayerIds.includes(selectedMatch.player1_id);
                   const p2Authenticated = !!selectedMatch.player2_id && authenticatedPlayerIds.includes(selectedMatch.player2_id);
                   const adminAuthenticated = authenticatedAdminIds.length > 0;
+                  const p1IsTbd = !selectedMatch.player1_id && incoming.slot1;
+                  const p2IsTbd = !selectedMatch.player2_id && incoming.slot2;
                   return (
                     <>
                 {isReadOnly ? (
@@ -1570,11 +1611,9 @@ export function BracketPage() {
                           className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${dqLoserId === selectedMatch.player1_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
                         >DQ</button>
                         <button
-                          onClick={() => {
-                            setDqLoserId(null);
-                            setP1Forfeit((v) => !v);
-                          }}
-                          className={`text-xs px-2 py-1 rounded ${p1Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                          onClick={() => applyForfeitWithDialog(1)}
+                          disabled={p1IsTbd}
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${p1Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
                         >棄権</button>
                       </div>
                     </div>
@@ -1623,11 +1662,9 @@ export function BracketPage() {
                           className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${dqLoserId === selectedMatch.player2_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
                         >DQ</button>
                         <button
-                          onClick={() => {
-                            setDqLoserId(null);
-                            setP2Forfeit((v) => !v);
-                          }}
-                          className={`text-xs px-2 py-1 rounded ${p2Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                          onClick={() => applyForfeitWithDialog(2)}
+                          disabled={p2IsTbd}
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${p2Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
                         >棄権</button>
                       </div>
                     </div>
@@ -1644,6 +1681,13 @@ export function BracketPage() {
                       </span>
                       <div className="w-[184px]" />
                     </div>
+                    {(p1Forfeit || p2Forfeit) && !dqLoserId && (
+                      <div className="rounded border border-red-200 bg-red-50 p-2">
+                        <p className="text-xs text-red-700">
+                          棄権内容: {forfeitAllMatches ? "全試合を棄権" : "この試合を棄権"}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
                     </>
@@ -1663,10 +1707,10 @@ export function BracketPage() {
                                             : "確認コード (DQあり: 当該プレイヤー)"
                           : p1Forfeit || p2Forfeit
                                           ? tournament.forfeit_auth_mode === "admin"
-                                            ? "確認コード (棄権: 管理者)"
+                                            ? `確認コード (${forfeitAllMatches ? "全試合棄権" : "棄権"}: 管理者)`
                                             : tournament.forfeit_auth_mode === "auth"
-                                            ? "確認コード (棄権: 認証)"
-                                            : "確認コード (棄権: 当該プレイヤー)"
+                                            ? `確認コード (${forfeitAllMatches ? "全試合棄権" : "棄権"}: 認証)`
+                                            : `確認コード (${forfeitAllMatches ? "全試合棄権" : "棄権"}: 当該プレイヤー)`
                             : tournament.result_auth_mode === "none"
                           ? "確認コード (通常結果入力: 認証不要)"
                           : tournament.result_auth_mode === "admin"
@@ -1765,6 +1809,44 @@ export function BracketPage() {
                     閉じる
                   </button>
                 </div>
+
+                {forfeitDialogSlot && (
+                  <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+                    <div className="w-full max-w-md rounded-xl bg-white border border-gray-200 shadow-xl p-4">
+                      <h4 className="text-sm font-bold text-gray-800 mb-2">棄権の確認</h4>
+                      <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={forfeitAllMatches}
+                          onChange={(e) => setForfeitAllMatches(e.target.checked)}
+                        />
+                        全試合の棄権
+                      </label>
+                      <p className="text-xs text-gray-600 mb-4">
+                        {forfeitAllMatches
+                          ? "この試合を含む以降の試合をすべて棄権します。"
+                          : "この試合のみ棄権します。"}
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={confirmForfeitSelection}
+                          className="flex-1 px-3 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-700"
+                        >
+                          棄権する
+                        </button>
+                        <button
+                          onClick={() => {
+                            setForfeitDialogSlot(null);
+                            setForfeitAllMatches(false);
+                          }}
+                          className="flex-1 px-3 py-2 text-sm rounded bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

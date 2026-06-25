@@ -116,11 +116,104 @@ interface ScoreActionAuth {
   forcedLossConfirmer?: ActionConfirmer | null;
 }
 
+export interface AppNetworkMessageSettings {
+  subnetMask: string;
+  port: number;
+  saveUnmatchedMessages: boolean;
+  preventUnresolvedThreadDeletion: boolean;
+}
+
+const APP_NETWORK_MESSAGE_SETTINGS_KEY = "app.network-message-settings.v1";
+const TOURNAMENT_WIDE_FORFEIT_KEY = "app.tournament-wide-forfeit-player-ids.v1";
+
+const DEFAULT_APP_NETWORK_MESSAGE_SETTINGS: AppNetworkMessageSettings = {
+  subnetMask: "255.255.255.0",
+  port: 49777,
+  saveUnmatchedMessages: true,
+  preventUnresolvedThreadDeletion: true,
+};
+
+function sanitizePort(port: unknown): number {
+  const normalized = Number(port);
+  if (!Number.isInteger(normalized)) return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.port;
+  return Math.min(65535, Math.max(1, normalized));
+}
+
+function loadAppNetworkMessageSettings(): AppNetworkMessageSettings {
+  if (typeof window === "undefined") return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(APP_NETWORK_MESSAGE_SETTINGS_KEY);
+    if (!raw) return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<AppNetworkMessageSettings>;
+    return {
+      subnetMask:
+        typeof parsed.subnetMask === "string" && parsed.subnetMask.trim().length > 0
+          ? parsed.subnetMask.trim()
+          : DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.subnetMask,
+      port: sanitizePort(parsed.port),
+      saveUnmatchedMessages:
+        typeof parsed.saveUnmatchedMessages === "boolean"
+          ? parsed.saveUnmatchedMessages
+          : DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.saveUnmatchedMessages,
+      preventUnresolvedThreadDeletion:
+        typeof parsed.preventUnresolvedThreadDeletion === "boolean"
+          ? parsed.preventUnresolvedThreadDeletion
+          : DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.preventUnresolvedThreadDeletion,
+    };
+  } catch {
+    return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS;
+  }
+}
+
+function saveAppNetworkMessageSettings(settings: AppNetworkMessageSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(APP_NETWORK_MESSAGE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage が使えない環境でも動作は継続
+  }
+}
+
+function loadTournamentWideForfeitMap(): Record<string, string[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(TOURNAMENT_WIDE_FORFEIT_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const normalized: Record<string, string[]> = {};
+    for (const [tournamentId, value] of Object.entries(parsed)) {
+      if (!tournamentId) continue;
+      if (!Array.isArray(value)) continue;
+      const ids = value
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0);
+      if (ids.length > 0) {
+        normalized[tournamentId] = [...new Set(ids)];
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+function saveTournamentWideForfeitMap(map: Record<string, string[]>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TOURNAMENT_WIDE_FORFEIT_KEY, JSON.stringify(map));
+  } catch {
+    // localStorage が使えない環境でも動作は継続
+  }
+}
+
 // -------------------------------------------------------
 // Context value type
 // -------------------------------------------------------
 interface AppContextValue {
   initialized: boolean;
+
+  networkMessageSettings: AppNetworkMessageSettings;
+  updateNetworkMessageSettings: (patch: Partial<AppNetworkMessageSettings>) => void;
 
   // Players
   players: Player[];
@@ -234,7 +327,8 @@ interface AppContextValue {
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
     player2_character_name?: string | null,
-    auth?: ScoreActionAuth
+    auth?: ScoreActionAuth,
+    forfeit_all_matches_player_ids?: string[]
   ) => Promise<void>;
 
   // Mid-tournament match creation
@@ -278,7 +372,8 @@ interface AppContextValue {
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
     player2_character_name?: string | null,
-    auth?: ScoreActionAuth
+    auth?: ScoreActionAuth,
+    forfeit_all_matches_player_ids?: string[]
   ) => Promise<void>;
   findActiveMatch: (player_id: string) => Promise<Match | null>;
   findMatchByTwoPlayers: (
@@ -738,6 +833,9 @@ const AppContext = createContext<AppContextValue | null>(null);
 // -------------------------------------------------------
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
+  const [networkMessageSettings, setNetworkMessageSettings] = useState<AppNetworkMessageSettings>(
+    loadAppNetworkMessageSettings
+  );
   const [players, setPlayers] = useState<Player[]>([]);
   const [characters, setCharacters] = useState<CharacterMaster[]>([]);
   const [characterLists, setCharacterLists] = useState<CharacterList[]>([]);
@@ -755,6 +853,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activeTournamentIdRef = useRef<string | null>(null);
   // Guard against double-load in React StrictMode dev
   const loadedRef = useRef(false);
+  const tournamentWideForfeitMapRef = useRef<Record<string, string[]>>(loadTournamentWideForfeitMap());
+
+  const mergeTournamentWideForfeitPlayerIds = useCallback(
+    (tournamentId: string, playerIds: string[]): string[] => {
+      const normalized = playerIds
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0 && !isDummyPlayerId(id));
+      const existing = tournamentWideForfeitMapRef.current[tournamentId] ?? [];
+      if (normalized.length === 0) return existing;
+      const merged = [...new Set([...existing, ...normalized])];
+      tournamentWideForfeitMapRef.current = {
+        ...tournamentWideForfeitMapRef.current,
+        [tournamentId]: merged,
+      };
+      saveTournamentWideForfeitMap(tournamentWideForfeitMapRef.current);
+      return merged;
+    },
+    []
+  );
 
   // ---- loaders ----
   const fetchPlayers = useCallback(async () => {
@@ -1750,6 +1867,118 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { player1_side: nextP1Side, player2_side: nextP2Side };
   }, [matches]);
 
+  const applyTournamentWideForfeits = useCallback(
+    async (tournamentId: string, playerIds: string[]): Promise<boolean> => {
+      if (!tournament) return false;
+      const targetPlayerIds = [...new Set(playerIds.filter((id) => !!id && !isDummyPlayerId(id)))];
+      if (targetPlayerIds.length === 0) return false;
+
+      let changed = false;
+      let guard = 0;
+
+      while (guard < 512) {
+        guard += 1;
+        const snapshot = await getMatchesByTournament(tournamentId);
+        let progressed = false;
+
+        outer: for (const targetPlayerId of targetPlayerIds) {
+          for (const m of snapshot) {
+            if (m.status === "completed") continue;
+            if (m.player1_id !== targetPlayerId && m.player2_id !== targetPlayerId) continue;
+
+            const outcome = resolveMatchOutcome(
+              m,
+              snapshot,
+              m.player1_wins,
+              m.player2_wins,
+              [targetPlayerId],
+              null
+            );
+            if (outcome.status !== "completed") continue;
+
+            await updateMatchScore(
+              m.id,
+              m.player1_wins,
+              m.player2_wins,
+              "completed",
+              outcome.winner_id,
+              outcome.forfeit_player_id
+            );
+
+            await writeMatchActionLogs(tournamentId, m.id, [targetPlayerId], null);
+
+            const winnerCharacterName =
+              outcome.winner_id === m.player1_id
+                ? m.player1_character_name
+                : outcome.winner_id === m.player2_id
+                ? m.player2_character_name
+                : null;
+            const loserCharacterName =
+              outcome.loser_id === m.player1_id
+                ? m.player1_character_name
+                : outcome.loser_id === m.player2_id
+                ? m.player2_character_name
+                : null;
+
+            if (outcome.winner_id && m.next_match_id && m.next_match_slot) {
+              await updateMatchPlayerWithCharacter(
+                m.next_match_id,
+                m.next_match_slot as 1 | 2,
+                outcome.winner_id,
+                winnerCharacterName
+              );
+            }
+            if (
+              tournament.type === "double_elimination" &&
+              outcome.loser_id &&
+              m.loser_next_match_id &&
+              m.loser_next_match_slot
+            ) {
+              await updateMatchPlayerWithCharacter(
+                m.loser_next_match_id,
+                m.loser_next_match_slot as 1 | 2,
+                outcome.loser_id,
+                loserCharacterName
+              );
+            }
+
+            if (
+              m.bracket === "grand_final" &&
+              tournament.type === "double_elimination" &&
+              tournament.grand_final_reset &&
+              outcome.winner_id === m.player2_id &&
+              m.player1_id &&
+              m.player2_id
+            ) {
+              const hasResetMatch = snapshot.some(
+                (candidate) => candidate.tree_id === m.tree_id && candidate.bracket === "grand_final_reset"
+              );
+              if (!hasResetMatch) {
+                const resetMatch = createGrandFinalResetMatch(
+                  tournament.id,
+                  m.tree_id,
+                  m,
+                  m.player2_id,
+                  m.player1_id
+                );
+                await insertMatch(applyDefaultMatchSides(resetMatch, tournament.default_player_side));
+              }
+            }
+
+            progressed = true;
+            changed = true;
+            break outer;
+          }
+        }
+
+        if (!progressed) break;
+      }
+
+      return changed;
+    },
+    [tournament]
+  );
+
   const recordScore = useCallback(
     async (
       match: Match,
@@ -1759,9 +1988,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
       player2_character_name: string | null = null,
-      auth?: ScoreActionAuth
+      auth?: ScoreActionAuth,
+      forfeit_all_matches_player_ids: string[] = []
     ) => {
       if (!tournament) return;
+
+      const activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
+        tournament.id,
+        forfeit_all_matches_player_ids
+      );
 
       const validatedP1Character =
         match.player1_id && !isDummyPlayerId(match.player1_id)
@@ -1861,6 +2096,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (activeTournamentWideForfeitIds.length > 0) {
+        await applyTournamentWideForfeits(tournament.id, activeTournamentWideForfeitIds);
+      }
+
       await syncPendingMatchSides(tournament);
 
       // Check if tournament is complete (no more non-completed matches with both players)
@@ -1878,7 +2117,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       await fetchTournament();
     },
-    [tournament, fetchTournament]
+    [
+      tournament,
+      fetchTournament,
+      mergeTournamentWideForfeitPlayerIds,
+      applyTournamentWideForfeits,
+    ]
   );
 
   // ---- Bracket tree mutations ----
@@ -1973,9 +2217,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
       player2_character_name: string | null = null,
-      auth?: ScoreActionAuth
+      auth?: ScoreActionAuth,
+      forfeit_all_matches_player_ids: string[] = []
     ) => {
       if (!tournament) return;
+
+      const activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
+        tournament.id,
+        forfeit_all_matches_player_ids
+      );
 
       const validatedP1Character =
         match.player1_id && !isDummyPlayerId(match.player1_id)
@@ -2104,6 +2354,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (activeTournamentWideForfeitIds.length > 0) {
+        await applyTournamentWideForfeits(tournament.id, activeTournamentWideForfeitIds);
+      }
+
       await syncPendingMatchSides(tournament);
 
       // Re-sync tournament completion status
@@ -2119,7 +2373,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       await fetchTournament();
     },
-    [tournament, matches, fetchTournament]
+    [
+      tournament,
+      matches,
+      fetchTournament,
+      mergeTournamentWideForfeitPlayerIds,
+      applyTournamentWideForfeits,
+    ]
   );
 
   const addParticipantAndAssign = useCallback(
@@ -2447,8 +2707,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const isReadOnly = tournament?.status === "finalized";
 
+  const updateNetworkMessageSettings = useCallback((patch: Partial<AppNetworkMessageSettings>) => {
+    setNetworkMessageSettings((prev) => {
+      const next: AppNetworkMessageSettings = {
+        subnetMask:
+          typeof patch.subnetMask === "string" && patch.subnetMask.trim().length > 0
+            ? patch.subnetMask.trim()
+            : prev.subnetMask,
+        port: patch.port == null ? prev.port : sanitizePort(patch.port),
+        saveUnmatchedMessages:
+          typeof patch.saveUnmatchedMessages === "boolean"
+            ? patch.saveUnmatchedMessages
+            : prev.saveUnmatchedMessages,
+        preventUnresolvedThreadDeletion:
+          typeof patch.preventUnresolvedThreadDeletion === "boolean"
+            ? patch.preventUnresolvedThreadDeletion
+            : prev.preventUnresolvedThreadDeletion,
+      };
+      saveAppNetworkMessageSettings(next);
+      return next;
+    });
+  }, []);
+
   const value: AppContextValue = {
     initialized,
+    networkMessageSettings,
+    updateNetworkMessageSettings,
     players,
     characters,
     characterLists,
