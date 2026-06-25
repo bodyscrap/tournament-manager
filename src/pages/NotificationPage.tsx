@@ -721,7 +721,7 @@ function NewMessageDialog({
         return;
       }
 
-      const body = "通信欄:\n" + (trimmedComment || "(未入力)");
+      const body = "汎用メッセージ";
       await onSend({
         attribute: "GENERAL",
         title,
@@ -780,7 +780,7 @@ function NewMessageDialog({
             <textarea
               rows={2}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-              placeholder="例: T001, T005"
+              placeholder="例: 0001, 0005"
               value={targetTournamentIdsInput}
               onChange={(e) => setTargetTournamentIdsInput(e.target.value)}
             />
