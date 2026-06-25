@@ -11,6 +11,15 @@ const MAX_COMMENT_LEN = 300;
 
 type Tab = "received" | "sent" | "unmatched";
 type ComposeKind = "CALL" | "TOURNAMENT_ID_CHECK" | "GENERAL";
+type MessageListEntry = ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry;
+
+type ThreadGroup = {
+  threadId: string;
+  entries: MessageListEntry[];
+  rootEntry: MessageListEntry | null;
+  latestEntry: MessageListEntry;
+  latestTime: number;
+};
 
 type PlayerOption = {
   playerId: string;
@@ -798,6 +807,7 @@ export function NotificationPage() {
     matchSlot?: 1 | 2;
   } | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [expandedThreadIds, setExpandedThreadIds] = useState<Set<string>>(new Set());
   const [resolvingThread, setResolvingThread] = useState(false);
   const [requestingRemoteDq, setRequestingRemoteDq] = useState(false);
   const [approvingRemoteDq, setApprovingRemoteDq] = useState(false);
@@ -831,6 +841,43 @@ export function NotificationPage() {
   const selectedMessage = useMemo(() => {
     return messages.find((m) => m.message.messageId === selectedMessageId) || null;
   }, [messages, selectedMessageId]);
+
+  const threadGroups = useMemo<ThreadGroup[]>(() => {
+    const byThread = new Map<string, MessageListEntry[]>();
+    for (const entry of messages) {
+      const threadId = entry.message.threadId ?? entry.message.messageId;
+      const list = byThread.get(threadId);
+      if (list) {
+        list.push(entry);
+      } else {
+        byThread.set(threadId, [entry]);
+      }
+    }
+
+    const groups: ThreadGroup[] = [];
+    for (const [threadId, entries] of byThread.entries()) {
+      const sortedByLatest = [...entries].sort((a, b) => {
+        const ta = new Date(a.message.sentAt ?? a.message.timestamp).getTime();
+        const tb = new Date(b.message.sentAt ?? b.message.timestamp).getTime();
+        return tb - ta;
+      });
+      const latestEntry = sortedByLatest[0];
+      const rootMessageId = latestEntry.message.rootMessageId ?? threadId;
+      const rootEntry =
+        sortedByLatest.find((entry) => entry.message.messageId === rootMessageId) ?? null;
+      const latestTime = new Date(latestEntry.message.sentAt ?? latestEntry.message.timestamp).getTime();
+
+      groups.push({
+        threadId,
+        entries: sortedByLatest,
+        rootEntry,
+        latestEntry,
+        latestTime,
+      });
+    }
+
+    return groups.sort((a, b) => b.latestTime - a.latestTime);
+  }, [messages]);
 
   const selectedThreadId = selectedMessage?.message.threadId ?? selectedMessage?.message.messageId ?? null;
 
@@ -892,6 +939,20 @@ export function NotificationPage() {
       setSelectedMessageId(messages[0].message.messageId);
     }
   }, [messages, selectedMessageId]);
+
+  useEffect(() => {
+    setExpandedThreadIds((prev) => {
+      if (prev.size === 0) return prev;
+      const threadIdSet = new Set(threadGroups.map((group) => group.threadId));
+      const next = new Set<string>();
+      for (const threadId of prev) {
+        if (threadIdSet.has(threadId)) {
+          next.add(threadId);
+        }
+      }
+      return next;
+    });
+  }, [threadGroups]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -1088,6 +1149,7 @@ export function NotificationPage() {
           onClick={() => {
             setTab("received");
             setSelectedMessageId(null);
+            setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
             tab === "received" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
@@ -1099,6 +1161,7 @@ export function NotificationPage() {
           onClick={() => {
             setTab("sent");
             setSelectedMessageId(null);
+            setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
             tab === "sent" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
@@ -1110,6 +1173,7 @@ export function NotificationPage() {
           onClick={() => {
             setTab("unmatched");
             setSelectedMessageId(null);
+            setExpandedThreadIds(new Set());
           }}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
             tab === "unmatched" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
@@ -1129,15 +1193,83 @@ export function NotificationPage() {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              {messages.map((entry) => (
-                <MessageListItem
-                  key={entry.message.messageId}
-                  entry={entry}
-                  isSelected={selectedMessage?.message.messageId === entry.message.messageId}
-                  isThreadResolved={resolvedThreadMap.has(entry.message.threadId ?? entry.message.messageId)}
-                  onClick={() => setSelectedMessageId(entry.message.messageId)}
-                />
-              ))}
+              {threadGroups.map((group) => {
+                const representative = group.rootEntry ?? group.latestEntry;
+                const representativeId = representative.message.messageId;
+                const isExpanded = expandedThreadIds.has(group.threadId);
+                const isThreadSelected = group.entries.some(
+                  (entry) => entry.message.messageId === selectedMessage?.message.messageId
+                );
+                const isThreadResolved = resolvedThreadMap.has(group.threadId);
+
+                return (
+                  <div key={group.threadId} className="border-b border-gray-200">
+                    <div className="flex items-center bg-gray-50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMessageId(representativeId);
+                        }}
+                        className={`flex-1 min-w-0 px-2 py-2 text-left hover:bg-gray-100 ${
+                          isThreadSelected ? "bg-blue-50" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 font-medium">
+                            {group.entries.length}件
+                          </span>
+                          {isThreadResolved && (
+                            <span className="text-[11px] text-emerald-700 font-medium">✓ 解決</span>
+                          )}
+                          <p className="text-[11px] text-gray-500 truncate">
+                            スレッド: {group.threadId}
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedThreadIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.threadId)) {
+                              next.delete(group.threadId);
+                            } else {
+                              next.add(group.threadId);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="px-2 py-2 text-xs text-gray-600 hover:text-gray-800"
+                        title={isExpanded ? "折りたたむ" : "展開する"}
+                      >
+                        {isExpanded ? "▾" : "▸"}
+                      </button>
+                    </div>
+
+                    <MessageListItem
+                      key={representativeId}
+                      entry={representative}
+                      isSelected={selectedMessage?.message.messageId === representativeId}
+                      isThreadResolved={isThreadResolved}
+                      onClick={() => setSelectedMessageId(representativeId)}
+                    />
+
+                    {isExpanded &&
+                      group.entries
+                        .filter((entry) => entry.message.messageId !== representativeId)
+                        .map((entry) => (
+                          <div key={entry.message.messageId} className="ml-3 border-l border-gray-200">
+                            <MessageListItem
+                              entry={entry}
+                              isSelected={selectedMessage?.message.messageId === entry.message.messageId}
+                              isThreadResolved={isThreadResolved}
+                              onClick={() => setSelectedMessageId(entry.message.messageId)}
+                            />
+                          </div>
+                        ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

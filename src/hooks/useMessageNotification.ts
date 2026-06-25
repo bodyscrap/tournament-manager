@@ -629,10 +629,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             return;
           }
 
-          for (const accepted of acceptedTournaments) {
-            await persistMessageForTournament(accepted.id, message, "received");
-          }
-
           if (tournament && acceptedTournaments.some((t) => t.id === tournament.id)) {
             const isOnNotificationPage = location.pathname === "/notification";
             dispatch({
@@ -646,6 +642,17 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
               updateTournamentLastSeen(tournament.id, message.receivedAt ?? nowIso());
             }
             void maybeSendTournamentIdCheckResult(message);
+          }
+
+          const persistResults = await Promise.allSettled(
+            acceptedTournaments.map((accepted) =>
+              persistMessageForTournament(accepted.id, message, "received")
+            )
+          );
+          for (const result of persistResults) {
+            if (result.status === "rejected") {
+              console.error("[Message] Failed to persist incoming message", result.reason);
+            }
           }
         })().catch((error) => {
           seenMessageIds.current.delete(messageId);
