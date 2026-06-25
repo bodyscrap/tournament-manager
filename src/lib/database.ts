@@ -533,6 +533,34 @@ async function initSchema(db: Database): Promise<void> {
   try {
     await db.execute(`ALTER TABLE matches ADD COLUMN result_finalized_at TEXT`);
   } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE matches ADD COLUMN forfeit_player_id TEXT`);
+  } catch { /* exists */ }
+  try {
+    // 旧カラム dq_player_id から新カラムへ移送（旧DB互換）
+    await db.execute(
+      `UPDATE matches
+       SET forfeit_player_id = dq_player_id
+       WHERE forfeit_player_id IS NULL AND dq_player_id IS NOT NULL`
+    );
+  } catch { /* dq_player_id が無い新規DBでは失敗して問題なし */ }
+
+  try {
+    // 旧命名 -> 新命名の認証モードを移送（旧DB互換）
+    await db.execute(
+      `UPDATE tournament
+       SET forfeit_auth_mode = dq_auth_mode
+       WHERE (forfeit_auth_mode IS NULL OR forfeit_auth_mode = '')
+         AND dq_auth_mode IS NOT NULL`
+    );
+  } catch { /* ignore */ }
+  try {
+    await db.execute(
+      `UPDATE tournament
+       SET dq_auth_mode = forced_loss_auth_mode
+       WHERE forced_loss_auth_mode IS NOT NULL`
+    );
+  } catch { /* forced_loss_auth_mode が無い新規DBでは失敗して問題なし */ }
 }
 
 // ----------------------
