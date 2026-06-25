@@ -230,21 +230,14 @@ function MessageDetailView({
   const [dqVerifiedCode, setDqVerifiedCode] = useState<string | null>(null);
   const [showDqQrScan, setShowDqQrScan] = useState(false);
 
-  if (!entry) {
-    return (
-      <div className="h-full flex items-center justify-center text-gray-400">
-        <p className="text-sm">メッセージを選択してください</p>
-      </div>
-    );
-  }
-
-  const message = entry.message;
-  const sentTime = message.sentAt ?? message.timestamp;
-  const receivedTime = message.receivedAt;
+  const message = entry?.message ?? null;
+  const messageId = message?.messageId ?? "";
+  const sentTime = message ? message.sentAt ?? message.timestamp : "";
+  const receivedTime = message?.receivedAt;
   const isGeneralMessage =
-    message.attribute === "GENERAL" ||
-    message.attribute === "REMOTE_DQ_REQUEST" ||
-    message.attribute === "REMOTE_DQ_APPROVED";
+    message?.attribute === "GENERAL" ||
+    message?.attribute === "REMOTE_DQ_REQUEST" ||
+    message?.attribute === "REMOTE_DQ_APPROVED";
   const canReply = isGeneralMessage && !isThreadResolved;
   const normalizedExpectedDqCode = extractUserCode(remoteDqExpectedUserCode ?? "");
   const normalizedInputDqCode = extractUserCode(dqCodeInput);
@@ -260,13 +253,21 @@ function MessageDetailView({
     setDqError("");
     setDqVerifiedCode(null);
     setShowDqQrScan(false);
-  }, [message.messageId]);
+  }, [messageId]);
 
   useEffect(() => {
     if (!normalizedExpectedDqCode || !normalizedInputDqCode || normalizedInputDqCode !== dqVerifiedCode) {
       setDqVerifiedCode(null);
     }
   }, [normalizedExpectedDqCode, normalizedInputDqCode, dqVerifiedCode]);
+
+  if (!message) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-400">
+        <p className="text-sm">メッセージを選択してください</p>
+      </div>
+    );
+  }
 
   const handleReply = async (comment: string) => {
     setReplySending(true);
