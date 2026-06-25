@@ -873,6 +873,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const removeTournamentWideForfeitPlayerIds = useCallback(
+    (tournamentId: string, playerIds: string[]): string[] => {
+      const normalized = playerIds
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0 && !isDummyPlayerId(id));
+      if (normalized.length === 0) {
+        return tournamentWideForfeitMapRef.current[tournamentId] ?? [];
+      }
+
+      const removalSet = new Set(normalized);
+      const existing = tournamentWideForfeitMapRef.current[tournamentId] ?? [];
+      const next = existing.filter((id) => !removalSet.has(id));
+
+      if (next.length === existing.length) return existing;
+
+      const updated = { ...tournamentWideForfeitMapRef.current };
+      if (next.length > 0) {
+        updated[tournamentId] = next;
+      } else {
+        delete updated[tournamentId];
+      }
+
+      tournamentWideForfeitMapRef.current = updated;
+      saveTournamentWideForfeitMap(updated);
+      return next;
+    },
+    []
+  );
+
   // ---- loaders ----
   const fetchPlayers = useCallback(async () => {
     const data = await getAllPlayers();
@@ -1993,10 +2022,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ) => {
       if (!tournament) return;
 
-      const activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
+      let activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
         tournament.id,
         forfeit_all_matches_player_ids
       );
+
+      const currentForfeitSet = new Set(forfeit_player_ids);
+      const clearForfeitCandidates =
+        forced_loser_id == null
+          ? [match.player1_id, match.player2_id]
+              .filter((id): id is string => !!id && !isDummyPlayerId(id))
+              .filter((id) => !currentForfeitSet.has(id))
+          : [];
+      if (clearForfeitCandidates.length > 0) {
+        activeTournamentWideForfeitIds = removeTournamentWideForfeitPlayerIds(
+          tournament.id,
+          clearForfeitCandidates
+        );
+      }
 
       const validatedP1Character =
         match.player1_id && !isDummyPlayerId(match.player1_id)
@@ -2121,6 +2164,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tournament,
       fetchTournament,
       mergeTournamentWideForfeitPlayerIds,
+      removeTournamentWideForfeitPlayerIds,
       applyTournamentWideForfeits,
     ]
   );
@@ -2222,10 +2266,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ) => {
       if (!tournament) return;
 
-      const activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
+      let activeTournamentWideForfeitIds = mergeTournamentWideForfeitPlayerIds(
         tournament.id,
         forfeit_all_matches_player_ids
       );
+
+      const currentForfeitSet = new Set(forfeit_player_ids);
+      const clearForfeitCandidates =
+        forced_loser_id == null
+          ? [match.player1_id, match.player2_id]
+              .filter((id): id is string => !!id && !isDummyPlayerId(id))
+              .filter((id) => !currentForfeitSet.has(id))
+          : [];
+      if (clearForfeitCandidates.length > 0) {
+        activeTournamentWideForfeitIds = removeTournamentWideForfeitPlayerIds(
+          tournament.id,
+          clearForfeitCandidates
+        );
+      }
 
       const validatedP1Character =
         match.player1_id && !isDummyPlayerId(match.player1_id)
@@ -2378,6 +2436,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       matches,
       fetchTournament,
       mergeTournamentWideForfeitPlayerIds,
+      removeTournamentWideForfeitPlayerIds,
       applyTournamentWideForfeits,
     ]
   );

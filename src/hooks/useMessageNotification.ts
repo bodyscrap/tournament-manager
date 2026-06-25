@@ -111,10 +111,26 @@ function normalizeIdentifier(value: string | null | undefined): string {
   return (value ?? "").normalize("NFKC").trim().toUpperCase();
 }
 
-function isSameIdentifier(a: string | null | undefined, b: string | null | undefined): boolean {
+function isNumericIdentifier(value: string): boolean {
+  return /^\d+$/.test(value);
+}
+
+function equalsIdentifier(a: string | null | undefined, b: string | null | undefined): boolean {
   const normalizedA = normalizeIdentifier(a);
   const normalizedB = normalizeIdentifier(b);
-  return normalizedA.length > 0 && normalizedA === normalizedB;
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+
+  // Legacy data may keep numeric IDs with different zero padding (e.g. 1 vs 0001).
+  if (isNumericIdentifier(normalizedA) && isNumericIdentifier(normalizedB)) {
+    return String(Number(normalizedA)) === String(Number(normalizedB));
+  }
+
+  return false;
+}
+
+function isSameIdentifier(a: string | null | undefined, b: string | null | undefined): boolean {
+  return equalsIdentifier(a, b);
 }
 
 function normalizeTargetTournamentIds(targets: string[] | undefined): string[] {
@@ -133,9 +149,11 @@ function matchesTournamentDestination(
   targets: string[]
 ): boolean {
   if (targets.length === 0) return true;
-  const normalizedCode = normalizeIdentifier(tournamentRef.tournament_code);
-  const normalizedId = normalizeIdentifier(tournamentRef.id);
-  return targets.includes(normalizedCode) || targets.includes(normalizedId);
+  return targets.some(
+    (target) =>
+      equalsIdentifier(target, tournamentRef.tournament_code) ||
+      equalsIdentifier(target, tournamentRef.id)
+  );
 }
 
 function resolveThreadManagementId(message: NotificationMessage): string {
@@ -820,6 +838,15 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           message.sentAt = message.sentAt ?? message.timestamp;
 
           if (acceptedTournaments.length === 0) {
+            console.warn("[Message] Dropped incoming message by destination/event filter", {
+              messageId: message.messageId,
+              attribute: message.attribute,
+              eventId: message.eventId,
+              sourceTournamentId: message.sourceTournamentId,
+              targets,
+              activeTournamentCode: tournament?.tournament_code,
+              activeTournamentId: tournament?.id,
+            });
             if (networkMessageSettings.saveUnmatchedMessages) {
               await persistUnmatchedMessage(message);
               if (tournament) {
