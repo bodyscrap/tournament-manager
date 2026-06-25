@@ -8,7 +8,6 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -26,8 +25,10 @@ import {
 } from "../lib/database";
 
 const MESSAGE_LAST_SEEN_KEY = "message-last-seen-by-tournament";
+const MESSAGE_READ_IDS_KEY = "message-read-ids-by-tournament";
 
 type LastSeenByTournament = Record<string, string>;
+type ReadMessageIdsByTournament = Record<string, string[]>;
 
 function loadLastSeenByTournament(): LastSeenByTournament {
   if (typeof window === "undefined") return {};
@@ -52,6 +53,34 @@ function saveLastSeenByTournament(lastSeenByTournament: LastSeenByTournament): v
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(MESSAGE_LAST_SEEN_KEY, JSON.stringify(lastSeenByTournament));
+  } catch {
+    // localStorage が使えない環境でも動作は継続
+  }
+}
+
+function loadReadMessageIdsByTournament(): ReadMessageIdsByTournament {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(MESSAGE_READ_IDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: ReadMessageIdsByTournament = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value)) {
+        result[key] = value.filter((item): item is string => typeof item === "string");
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveReadMessageIdsByTournament(readIdsByTournament: ReadMessageIdsByTournament): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MESSAGE_READ_IDS_KEY, JSON.stringify(readIdsByTournament));
   } catch {
     // localStorage が使えない環境でも動作は継続
   }
@@ -97,6 +126,7 @@ interface NotificationState {
   receivedMessages: ReceivedMessageEntry[];
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
+  unreadReceivedMessageIds: string[];
   unreadReceivedCount: number;
 }
 
@@ -106,30 +136,38 @@ type NotificationAction =
       receivedMessages: ReceivedMessageEntry[];
       sentMessages: SentMessageEntry[];
       unmatchedMessages: UnmatchedMessageEntry[];
-      unreadReceivedCount: number;
+      unreadReceivedMessageIds: string[];
     }
   | { type: "RECEIVE_MESSAGE"; message: NotificationMessage; markAsUnread: boolean }
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage }
   | { type: "ADD_UNMATCHED_MESSAGE"; message: NotificationMessage }
+  | { type: "MARK_RECEIVED_READ"; messageId: string }
   | { type: "MARK_ALL_RECEIVED_READ" };
 
 function reducer(state: NotificationState, action: NotificationAction): NotificationState {
   switch (action.type) {
     case "RECEIVE_MESSAGE":
+      {
+      const alreadyUnread = state.unreadReceivedMessageIds.includes(action.message.messageId);
+      const nextUnreadIds =
+        action.markAsUnread && !alreadyUnread
+          ? [action.message.messageId, ...state.unreadReceivedMessageIds]
+          : state.unreadReceivedMessageIds;
       return {
         ...state,
         receivedMessages: [{ message: action.message }, ...state.receivedMessages],
-        unreadReceivedCount: action.markAsUnread
-          ? state.unreadReceivedCount + 1
-          : state.unreadReceivedCount,
+        unreadReceivedMessageIds: nextUnreadIds,
+        unreadReceivedCount: nextUnreadIds.length,
       };
+      }
 
     case "HYDRATE_MESSAGES":
       return {
         receivedMessages: action.receivedMessages,
         sentMessages: action.sentMessages,
         unmatchedMessages: action.unmatchedMessages,
-        unreadReceivedCount: action.unreadReceivedCount,
+        unreadReceivedMessageIds: action.unreadReceivedMessageIds,
+        unreadReceivedCount: action.unreadReceivedMessageIds.length,
       };
 
     case "ADD_SENT_MESSAGE":
@@ -144,10 +182,22 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         unmatchedMessages: [{ message: action.message }, ...state.unmatchedMessages],
       };
 
-    case "MARK_ALL_RECEIVED_READ":
-      if (state.unreadReceivedCount === 0) return state;
+    case "MARK_RECEIVED_READ":
+      {
+      if (!state.unreadReceivedMessageIds.includes(action.messageId)) return state;
+      const nextUnreadIds = state.unreadReceivedMessageIds.filter((id) => id !== action.messageId);
       return {
         ...state,
+        unreadReceivedMessageIds: nextUnreadIds,
+        unreadReceivedCount: nextUnreadIds.length,
+      };
+      }
+
+    case "MARK_ALL_RECEIVED_READ":
+      if (state.unreadReceivedMessageIds.length === 0) return state;
+      return {
+        ...state,
+        unreadReceivedMessageIds: [],
         unreadReceivedCount: 0,
       };
 
@@ -160,6 +210,7 @@ const initialState: NotificationState = {
   receivedMessages: [],
   sentMessages: [],
   unmatchedMessages: [],
+  unreadReceivedMessageIds: [],
   unreadReceivedCount: 0,
 };
 
@@ -168,6 +219,8 @@ type MessageNotificationContextValue = {
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
   unreadReceivedCount: number;
+  isReceivedMessageUnread: (messageId: string) => boolean;
+  markReceivedMessageRead: (messageId: string) => void;
   sendMessage: (input: {
     attribute: MessageAttribute;
     title: string;
@@ -204,10 +257,10 @@ const MessageNotificationContext = createContext<MessageNotificationContextValue
 
 export function MessageNotificationProvider({ children }: { children: ReactNode }) {
   const { tournament, tournamentList } = useAppContext();
-  const location = useLocation();
   const [state, dispatch] = useReducer(reducer, initialState);
   const previousTournamentIdRef = useRef<string | null>(null);
   const lastSeenByTournamentRef = useRef<LastSeenByTournament>(loadLastSeenByTournament());
+  const readMessageIdsByTournamentRef = useRef<ReadMessageIdsByTournament>(loadReadMessageIdsByTournament());
 
   /**
    * 処理済み messageId の Set。
@@ -381,6 +434,20 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     saveLastSeenByTournament(nextMap);
   }, []);
 
+  const markReceivedMessageRead = useCallback((messageId: string) => {
+    if (!tournament?.id || !messageId) return;
+    const current = readMessageIdsByTournamentRef.current[tournament.id] ?? [];
+    if (current.includes(messageId)) return;
+    const next = [...current, messageId];
+    const nextMap: ReadMessageIdsByTournament = {
+      ...readMessageIdsByTournamentRef.current,
+      [tournament.id]: next,
+    };
+    readMessageIdsByTournamentRef.current = nextMap;
+    saveReadMessageIdsByTournament(nextMap);
+    dispatch({ type: "MARK_RECEIVED_READ", messageId });
+  }, [tournament?.id]);
+
   const shouldAcceptByDestination = useCallback(
     (message: NotificationMessage): boolean => {
       const targets = message.targetTournamentIds ?? [];
@@ -443,14 +510,14 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           receivedMessages: [],
           sentMessages: [],
           unmatchedMessages: [],
-          unreadReceivedCount: 0,
+          unreadReceivedMessageIds: [],
         });
         return;
       }
 
       const records = await getTournamentMessages(tournament.id);
       const unmatchedRecords = await getUnmatchedMessages();
-      const lastSeenAt = lastSeenByTournamentRef.current[tournament.id] ?? null;
+      const readMessageIds = new Set(readMessageIdsByTournamentRef.current[tournament.id] ?? []);
       const received = records
         .filter((record) => record.direction === "received")
         .map((record) => ({
@@ -490,9 +557,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             timestamp: record.timestamp,
           },
         }));
-      const unreadReceivedCount = lastSeenAt
-        ? records.filter((record) => record.direction === "received" && record.created_at > lastSeenAt).length
-        : 0;
+      const unreadReceivedMessageIds = records
+        .filter((record) => record.direction === "received" && !readMessageIds.has(record.id))
+        .map((record) => record.id);
 
       const sent = records
         .filter((record) => record.direction === "sent")
@@ -581,7 +648,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         receivedMessages: received,
         sentMessages: sent,
         unmatchedMessages: unmatched,
-        unreadReceivedCount,
+        unreadReceivedMessageIds,
       });
     };
 
@@ -630,17 +697,12 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           }
 
           if (tournament && acceptedTournaments.some((t) => t.id === tournament.id)) {
-            const isOnNotificationPage = location.pathname === "/notification";
             dispatch({
               type: "RECEIVE_MESSAGE",
               message,
-              markAsUnread: !isOnNotificationPage,
+              markAsUnread: true,
             });
-            if (!isOnNotificationPage) {
-              notifyIncomingMessage(message);
-            } else {
-              updateTournamentLastSeen(tournament.id, message.receivedAt ?? nowIso());
-            }
+            notifyIncomingMessage(message);
             void maybeSendTournamentIdCheckResult(message);
           }
 
@@ -665,7 +727,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       unlisten?.();
     };
   }, [
-    location.pathname,
     tournament,
     tournamentList,
     shouldAcceptByDestination,
@@ -673,7 +734,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     persistMessageForTournament,
     persistUnmatchedMessage,
     notifyIncomingMessage,
-    updateTournamentLastSeen,
   ]);
 
   useEffect(() => {
@@ -684,15 +744,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     }
     previousTournamentIdRef.current = currentTournamentId;
   }, [tournament?.id, updateTournamentLastSeen]);
-
-  useEffect(() => {
-    if (location.pathname === "/notification") {
-      if (tournament?.id) {
-        updateTournamentLastSeen(tournament.id);
-      }
-      dispatch({ type: "MARK_ALL_RECEIVED_READ" });
-    }
-  }, [location.pathname, tournament?.id, updateTournamentLastSeen]);
 
   // ── メッセージ送信 ──────────────────
   const sendMessage = useCallback(
@@ -724,6 +775,11 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     }): Promise<void> => {
       if (!tournament) throw new Error("大会が選択されていません");
 
+      const normalizedThreadId =
+        input.threadId ?? input.rootMessageId ?? input.parentMessageId ?? undefined;
+      const normalizedRootMessageId =
+        input.rootMessageId ?? normalizedThreadId;
+
       const message: NotificationMessage = {
         messageId: generateCompositeMessageId(tournament.event_code, tournament.tournament_code),
         eventId: tournament.event_code,
@@ -747,9 +803,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         remoteDqRequestedByTournamentId: input.remoteDqRequestedByTournamentId,
         remoteDqRequestedByTournamentName: input.remoteDqRequestedByTournamentName,
         remoteDqApproved: input.remoteDqApproved,
-        threadId: input.threadId,
+        threadId: normalizedThreadId,
         parentMessageId: input.parentMessageId,
-        rootMessageId: input.rootMessageId,
+        rootMessageId: normalizedRootMessageId,
         threadResolved: input.threadResolved,
         threadResolvedAt: input.threadResolvedAt,
         threadResolvedByTournamentId: input.threadResolvedByTournamentId,
@@ -759,7 +815,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       };
 
       // 新規スレッドの場合（返信でない場合）
-      if (!input.threadId) {
+      if (!normalizedThreadId) {
         message.threadId = message.messageId;
         message.rootMessageId = message.messageId;
       }
@@ -781,6 +837,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         sentMessages: state.sentMessages,
         unmatchedMessages: state.unmatchedMessages,
         unreadReceivedCount: state.unreadReceivedCount,
+        isReceivedMessageUnread: (messageId: string) =>
+          state.unreadReceivedMessageIds.includes(messageId),
+        markReceivedMessageRead,
         sendMessage,
       },
     },
@@ -799,6 +858,10 @@ export function useMessageNotification() {
     sentMessages: context.sentMessages,
     unmatchedMessages: context.unmatchedMessages,
     unreadReceivedCount: context.unreadReceivedCount,
+    isReceivedMessageUnread: context.isReceivedMessageUnread,
+    markReceivedMessageRead: context.markReceivedMessageRead,
     sendMessage: context.sendMessage,
   };
 }
+
+

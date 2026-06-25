@@ -27,8 +27,8 @@ type CreateFormDefaults = {
   grandFinalReset: boolean;
   defaultPlayerSide: TournamentDefaultPlayerSide;
   resultAuthMode: MatchActionAuthMode;
+  forfeitAuthMode: MatchActionAuthMode;
   dqAuthMode: MatchActionAuthMode;
-  forcedLossAuthMode: MatchActionAuthMode;
 };
 
 const CREATE_FORM_DEFAULTS_STORAGE_KEY = "tournament.create.defaults.v1";
@@ -39,8 +39,8 @@ const FALLBACK_CREATE_FORM_DEFAULTS: CreateFormDefaults = {
   grandFinalReset: true,
   defaultPlayerSide: "upper_1p",
   resultAuthMode: "none",
-  dqAuthMode: "target_player",
-  forcedLossAuthMode: "admin",
+  forfeitAuthMode: "target_player",
+  dqAuthMode: "admin",
 };
 
 function loadCreateFormDefaults(): CreateFormDefaults {
@@ -71,6 +71,13 @@ function loadCreateFormDefaults(): CreateFormDefaults {
         parsed.resultAuthMode === "loser"
           ? parsed.resultAuthMode
           : FALLBACK_CREATE_FORM_DEFAULTS.resultAuthMode,
+      forfeitAuthMode:
+        parsed.forfeitAuthMode === "admin" ||
+        parsed.forfeitAuthMode === "auth" ||
+        parsed.forfeitAuthMode === "target_player" ||
+        parsed.forfeitAuthMode === "admin_or_participant"
+          ? (parsed.forfeitAuthMode === "admin_or_participant" ? "target_player" : parsed.forfeitAuthMode)
+          : FALLBACK_CREATE_FORM_DEFAULTS.forfeitAuthMode,
       dqAuthMode:
         parsed.dqAuthMode === "admin" ||
         parsed.dqAuthMode === "auth" ||
@@ -78,13 +85,6 @@ function loadCreateFormDefaults(): CreateFormDefaults {
         parsed.dqAuthMode === "admin_or_participant"
           ? (parsed.dqAuthMode === "admin_or_participant" ? "target_player" : parsed.dqAuthMode)
           : FALLBACK_CREATE_FORM_DEFAULTS.dqAuthMode,
-      forcedLossAuthMode:
-        parsed.forcedLossAuthMode === "admin" ||
-        parsed.forcedLossAuthMode === "auth" ||
-        parsed.forcedLossAuthMode === "target_player" ||
-        parsed.forcedLossAuthMode === "admin_or_participant"
-          ? (parsed.forcedLossAuthMode === "admin_or_participant" ? "target_player" : parsed.forcedLossAuthMode)
-          : FALLBACK_CREATE_FORM_DEFAULTS.forcedLossAuthMode,
     };
   } catch {
     return FALLBACK_CREATE_FORM_DEFAULTS;
@@ -233,8 +233,8 @@ export function TournamentSetupPage() {
   const [gfReset, setGfReset] = useState(createInitialDefaults.grandFinalReset);
   const [createDefaultPlayerSide, setCreateDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>(createInitialDefaults.defaultPlayerSide);
   const [createResultAuthMode, setCreateResultAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.resultAuthMode);
+  const [createForfeitAuthMode, setCreateForfeitAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.forfeitAuthMode);
   const [createDqAuthMode, setCreateDqAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.dqAuthMode);
-  const [createForcedLossAuthMode, setCreateForcedLossAuthMode] = useState<MatchActionAuthMode>(createInitialDefaults.forcedLossAuthMode);
   const [saveCreateDefaultsOnCreate, setSaveCreateDefaultsOnCreate] = useState(false);
   const [createCharacterMode, setCreateCharacterMode] = useState<CharacterInputMode>("free_input");
   const [createCategoryCount, setCreateCategoryCount] = useState(1);
@@ -255,8 +255,8 @@ export function TournamentSetupPage() {
   const [editGfReset, setEditGfReset] = useState(true);
   const [editDefaultPlayerSide, setEditDefaultPlayerSide] = useState<TournamentDefaultPlayerSide>("upper_1p");
   const [editResultAuthMode, setEditResultAuthMode] = useState<MatchActionAuthMode>("none");
-  const [editDqAuthMode, setEditDqAuthMode] = useState<MatchActionAuthMode>("target_player");
-  const [editForcedLossAuthMode, setEditForcedLossAuthMode] = useState<MatchActionAuthMode>("admin");
+  const [editForfeitAuthMode, setEditForfeitAuthMode] = useState<MatchActionAuthMode>("target_player");
+  const [editDqAuthMode, setEditDqAuthMode] = useState<MatchActionAuthMode>("admin");
   const [editCharacterMode, setEditCharacterMode] = useState<CharacterInputMode>("free_input");
   const [editCategoryCount, setEditCategoryCount] = useState(1);
   const [editCategoryDrafts, setEditCategoryDrafts] = useState<CharacterCategoryDraft[]>([
@@ -501,8 +501,8 @@ export function TournamentSetupPage() {
         selectionConfig,
         createDefaultPlayerSide,
         createResultAuthMode,
-        createDqAuthMode,
-        createForcedLossAuthMode
+        createForfeitAuthMode,
+        createDqAuthMode
       );
       if (saveCreateDefaultsOnCreate) {
         saveCreateFormDefaults({
@@ -511,8 +511,8 @@ export function TournamentSetupPage() {
           grandFinalReset: gfReset,
           defaultPlayerSide: createDefaultPlayerSide,
           resultAuthMode: createResultAuthMode,
+          forfeitAuthMode: createForfeitAuthMode,
           dqAuthMode: createDqAuthMode,
-          forcedLossAuthMode: createForcedLossAuthMode,
         });
       }
     } finally {
@@ -529,15 +529,15 @@ export function TournamentSetupPage() {
     setEditGfReset(tournament.grand_final_reset);
     setEditDefaultPlayerSide(tournament.default_player_side ?? "upper_1p");
     setEditResultAuthMode(tournament.result_auth_mode ?? "none");
+    setEditForfeitAuthMode(
+      tournament.forfeit_auth_mode === "admin_or_participant"
+        ? "target_player"
+        : (tournament.forfeit_auth_mode ?? "target_player")
+    );
     setEditDqAuthMode(
       tournament.dq_auth_mode === "admin_or_participant"
         ? "target_player"
-        : (tournament.dq_auth_mode ?? "target_player")
-    );
-    setEditForcedLossAuthMode(
-      tournament.forced_loss_auth_mode === "admin_or_participant"
-        ? "target_player"
-        : (tournament.forced_loss_auth_mode ?? "admin")
+        : (tournament.dq_auth_mode ?? "admin")
     );
     setEditCharacterMode(tournament.character_input_mode);
     const config = tournament.character_selection_config;
@@ -600,8 +600,8 @@ export function TournamentSetupPage() {
         selectionConfig,
         editDefaultPlayerSide,
         editResultAuthMode,
-        editDqAuthMode,
-        editForcedLossAuthMode
+        editForfeitAuthMode,
+        editDqAuthMode
       );
       setEditSettings(false);
     } finally {
@@ -933,10 +933,10 @@ export function TournamentSetupPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">棄権時の認証</label>
             <select
-              value={createDqAuthMode}
-              onChange={(e) => setCreateDqAuthMode(e.target.value as MatchActionAuthMode)}
+              value={createForfeitAuthMode}
+              onChange={(e) => setCreateForfeitAuthMode(e.target.value as MatchActionAuthMode)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="auth">認証</option>
@@ -945,10 +945,10 @@ export function TournamentSetupPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">強制敗北時の認証</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
             <select
-              value={createForcedLossAuthMode}
-              onChange={(e) => setCreateForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
+              value={createDqAuthMode}
+              onChange={(e) => setCreateDqAuthMode(e.target.value as MatchActionAuthMode)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="auth">認証</option>
@@ -966,7 +966,7 @@ export function TournamentSetupPage() {
             ここまでの設定をデフォルトとして保存
           </label>
           <p className="text-xs text-gray-500 leading-relaxed">
-            次回の初期値として保存: トーナメント形式、参加上限、グランドファイナルリセット、デフォルトプレイヤーサイド、通常結果入力時の認証、DQ時の認証、強制敗北時の認証。保存しない: 大会名、イベントコード、大会コード、使用キャラ設定。
+            次回の初期値として保存: トーナメント形式、参加上限、グランドファイナルリセット、デフォルトプレイヤーサイド、通常結果入力時の認証、棄権時の認証、DQ時の認証。保存しない: 大会名、イベントコード、大会コード、使用キャラ設定。
           </p>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">使用キャラ設定</label>
@@ -1223,10 +1223,10 @@ export function TournamentSetupPage() {
             通常結果入力時の認証: {getAuthModeLabel(tournament.result_auth_mode ?? "none")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
-            DQ時の認証: {getAuthModeLabel(tournament.dq_auth_mode === "admin_or_participant" ? "target_player" : (tournament.dq_auth_mode ?? "target_player"))}
+            棄権時の認証: {getAuthModeLabel(tournament.forfeit_auth_mode === "admin_or_participant" ? "target_player" : (tournament.forfeit_auth_mode ?? "target_player"))}
           </p>
           <p className="text-sm text-gray-500 mt-1">
-            強制敗北時の認証: {getAuthModeLabel(tournament.forced_loss_auth_mode ?? "admin")}
+            DQ時の認証: {getAuthModeLabel(tournament.dq_auth_mode ?? "admin")}
           </p>
           <p className="text-sm text-gray-500 mt-1">
             イベントコード: <span className="font-mono">{normalizeEventCode(tournament.event_code ?? "0000")}</span>
@@ -1369,10 +1369,10 @@ export function TournamentSetupPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">棄権時の認証</label>
               <select
-                value={editDqAuthMode}
-                onChange={(e) => setEditDqAuthMode(e.target.value as MatchActionAuthMode)}
+                value={editForfeitAuthMode}
+                onChange={(e) => setEditForfeitAuthMode(e.target.value as MatchActionAuthMode)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="auth">認証</option>
@@ -1381,10 +1381,10 @@ export function TournamentSetupPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">強制敗北時の認証</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">DQ時の認証</label>
               <select
-                value={editForcedLossAuthMode}
-                onChange={(e) => setEditForcedLossAuthMode(e.target.value as MatchActionAuthMode)}
+                value={editDqAuthMode}
+                onChange={(e) => setEditDqAuthMode(e.target.value as MatchActionAuthMode)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="auth">認証</option>
@@ -2113,4 +2113,8 @@ export function TournamentSetupPage() {
     </div>
   );
 }
+
+
+
+
 

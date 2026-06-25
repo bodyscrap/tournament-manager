@@ -22,7 +22,7 @@ export function buildIncomingBySlot(matches: Match[]): Map<string, IncomingBySlo
     // 敗者側は以下の場合に流入しうる。
     // - 未完了: まだ敗者が確定していない
     // - completed + winner_id あり: 敗者を一意に算出可能
-    // - completed + dq_player_id あり: DQ側が敗者
+    // - completed + forfeit_player_id あり: DQ側が敗者
     const hasSingleAssignedParticipant =
       (m.player1_id !== null && m.player2_id === null) ||
       (m.player1_id === null && m.player2_id !== null);
@@ -33,11 +33,11 @@ export function buildIncomingBySlot(matches: Match[]): Map<string, IncomingBySlo
     const canFeedLoser =
       // 未完了なら今後敗者が確定する可能性がある
       m.status !== "completed" ||
-      // DQは dq_player_id 側が敗者として流せる
-      m.dq_player_id !== null ||
+      // DQは forfeit_player_id 側が敗者として流せる
+      m.forfeit_player_id !== null ||
       // 勝者がいて、かつ反対側プレイヤーが実在する場合のみ敗者を流せる
       canFeedLoserFromWinner ||
-      // BYE強制敗北などで winner_id が null でも敗者は一意に決まるケース
+      // BYE・DQなどで winner_id が null でも敗者は一意に決まるケース
       (m.status === "completed" && m.winner_id === null && hasSingleAssignedParticipant);
     if (canFeedLoser && m.loser_next_match_id && m.loser_next_match_slot) {
       const incoming = incomingBySlot.get(m.loser_next_match_id) ?? { slot1: false, slot2: false };
@@ -69,3 +69,6 @@ export function getUiMatchStateLabel(state: UiMatchState): string {
   if (state === "in_progress") return "試合中";
   return "結果確定";
 }
+
+
+

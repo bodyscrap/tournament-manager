@@ -158,3 +158,6 @@ export function QrScannerDialog({ open, title, onClose, onDetected }: Props) {
     </div>
   );
 }
+
+
+

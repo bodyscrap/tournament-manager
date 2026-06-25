@@ -351,8 +351,8 @@ async function initSchema(db: Database): Promise<void> {
       character_input_mode TEXT NOT NULL DEFAULT 'free_input',
       default_player_side TEXT NOT NULL DEFAULT 'upper_1p',
       result_auth_mode   TEXT NOT NULL DEFAULT 'none',
-      dq_auth_mode       TEXT NOT NULL DEFAULT 'target_player',
-      forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin',
+      forfeit_auth_mode       TEXT NOT NULL DEFAULT 'target_player',
+      dq_auth_mode TEXT NOT NULL DEFAULT 'admin',
       character_list_json TEXT,
       character_selection_config_json TEXT,
       created_at         TEXT NOT NULL
@@ -395,7 +395,7 @@ async function initSchema(db: Database): Promise<void> {
       player2_side           TEXT NOT NULL DEFAULT '2P',
       status                 TEXT NOT NULL DEFAULT 'pending',
       result_finalized_at    TEXT,
-      dq_player_id           TEXT,
+      forfeit_player_id           TEXT,
       next_match_id          TEXT,
       next_match_slot        INTEGER,
       loser_next_match_id    TEXT,
@@ -440,10 +440,10 @@ async function initSchema(db: Database): Promise<void> {
     await db.execute(`ALTER TABLE tournament ADD COLUMN result_auth_mode TEXT NOT NULL DEFAULT 'none'`);
   } catch { /* exists */ }
   try {
-    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'target_player'`);
+    await db.execute(`ALTER TABLE tournament ADD COLUMN forfeit_auth_mode TEXT NOT NULL DEFAULT 'target_player'`);
   } catch { /* exists */ }
   try {
-    await db.execute(`ALTER TABLE tournament ADD COLUMN forced_loss_auth_mode TEXT NOT NULL DEFAULT 'admin'`);
+    await db.execute(`ALTER TABLE tournament ADD COLUMN dq_auth_mode TEXT NOT NULL DEFAULT 'admin'`);
   } catch { /* exists */ }
   try {
     await db.execute(`ALTER TABLE tournament ADD COLUMN character_list_name TEXT`);
@@ -758,12 +758,12 @@ function rowToTournament(row: TournamentRow): Tournament {
     character_selection_config: normalizedConfig,
     default_player_side: row.default_player_side ?? "upper_1p",
     result_auth_mode: (row.result_auth_mode ?? "none") as MatchActionAuthMode,
-    dq_auth_mode: ((row.dq_auth_mode ?? "target_player") === "admin_or_participant"
+    forfeit_auth_mode: ((row.forfeit_auth_mode ?? "target_player") === "admin_or_participant"
       ? "target_player"
-      : (row.dq_auth_mode ?? "target_player")) as MatchActionAuthMode,
-    forced_loss_auth_mode: ((row.forced_loss_auth_mode ?? "admin") === "admin_or_participant"
+      : (row.forfeit_auth_mode ?? "target_player")) as MatchActionAuthMode,
+    dq_auth_mode: ((row.dq_auth_mode ?? "admin") === "admin_or_participant"
       ? "target_player"
-      : (row.forced_loss_auth_mode ?? "admin")) as MatchActionAuthMode,
+      : (row.dq_auth_mode ?? "admin")) as MatchActionAuthMode,
     created_at: row.created_at,
   };
 }
@@ -809,8 +809,8 @@ export async function createTournament(
   character_selection_config: TournamentCharacterSelectionConfig | null,
   default_player_side: TournamentDefaultPlayerSide,
   result_auth_mode: MatchActionAuthMode,
-  dq_auth_mode: MatchActionAuthMode,
-  forced_loss_auth_mode: MatchActionAuthMode
+  forfeit_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -828,7 +828,7 @@ export async function createTournament(
     : null;
   const selectionConfigJson = JSON.stringify(normalizedConfig);
   await db.execute(
-    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, result_auth_mode, dq_auth_mode, forced_loss_auth_mode, character_list_name, character_list_json, character_selection_config_json, created_at)
+    `INSERT INTO tournament (id, name, event_code, tournament_code, type, max_participants, status, grand_final_reset, character_input_mode, default_player_side, result_auth_mode, forfeit_auth_mode, dq_auth_mode, character_list_name, character_list_json, character_selection_config_json, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, 'setup', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       id,
@@ -841,8 +841,8 @@ export async function createTournament(
       character_input_mode,
       default_player_side,
       result_auth_mode,
+      forfeit_auth_mode,
       dq_auth_mode,
-      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,
@@ -872,8 +872,8 @@ export async function updateTournamentSettings(
   character_selection_config: TournamentCharacterSelectionConfig | null,
   default_player_side: TournamentDefaultPlayerSide,
   result_auth_mode: MatchActionAuthMode,
-  dq_auth_mode: MatchActionAuthMode,
-  forced_loss_auth_mode: MatchActionAuthMode
+  forfeit_auth_mode: MatchActionAuthMode,
+  dq_auth_mode: MatchActionAuthMode
 ): Promise<void> {
   const db = await getDb();
   const normalizedList = normalizeCharacterList(character_list);
@@ -900,8 +900,8 @@ export async function updateTournamentSettings(
          character_input_mode = $6,
          default_player_side = $7,
          result_auth_mode = $8,
-         dq_auth_mode = $9,
-         forced_loss_auth_mode = $10,
+         forfeit_auth_mode = $9,
+         dq_auth_mode = $10,
          character_list_name = $11,
          character_list_json = $12,
          character_selection_config_json = $13
@@ -915,8 +915,8 @@ export async function updateTournamentSettings(
       character_input_mode,
       default_player_side,
       result_auth_mode,
+      forfeit_auth_mode,
       dq_auth_mode,
-      forced_loss_auth_mode,
       listName,
       listJson,
       selectionConfigJson,
@@ -1522,7 +1522,7 @@ function rowToMatch(row: MatchRow): Match {
     player2_side: row.player2_side ?? "-",
     status: row.status,
     result_finalized_at: row.result_finalized_at ?? null,
-    dq_player_id: row.dq_player_id,
+    forfeit_player_id: row.forfeit_player_id,
     next_match_id: row.next_match_id,
     next_match_slot: row.next_match_slot,
     loser_next_match_id: row.loser_next_match_id,
@@ -1585,7 +1585,7 @@ export async function insertMatch(match: Match): Promise<void> {
     `INSERT INTO matches (
        id, tournament_id, tree_id, round, position, bracket,
        player1_id, player2_id, winner_id,
-       player1_wins, player2_wins, player1_character_name, player2_character_name, player1_side, player2_side, status, dq_player_id,
+       player1_wins, player2_wins, player1_character_name, player2_character_name, player1_side, player2_side, status, forfeit_player_id,
        result_finalized_at,
        next_match_id, next_match_slot,
        loser_next_match_id, loser_next_match_slot
@@ -1600,7 +1600,7 @@ export async function insertMatch(match: Match): Promise<void> {
       match.id, match.tournament_id, match.tree_id, match.round, match.position, match.bracket,
       match.player1_id, match.player2_id, match.winner_id,
       match.player1_wins, match.player2_wins, match.player1_character_name, match.player2_character_name,
-      match.player1_side, match.player2_side, match.status, match.dq_player_id, match.result_finalized_at ?? null,
+      match.player1_side, match.player2_side, match.status, match.forfeit_player_id, match.result_finalized_at ?? null,
       match.next_match_id, match.next_match_slot,
       match.loser_next_match_id, match.loser_next_match_slot,
     ]
@@ -1637,13 +1637,13 @@ export async function updateMatchScore(
   player2_wins: number,
   status: "pending" | "in_progress" | "completed",
   winner_id: string | null,
-  dq_player_id: string | null
+  forfeit_player_id: string | null
 ): Promise<void> {
   const db = await getDb();
   const resultFinalizedAt = status === "completed" ? new Date().toISOString() : null;
   await db.execute(
-    `UPDATE matches SET player1_wins = $1, player2_wins = $2, status = $3, winner_id = $4, dq_player_id = $5, result_finalized_at = $6 WHERE id = $7`,
-    [player1_wins, player2_wins, status, winner_id, dq_player_id, resultFinalizedAt, id]
+    `UPDATE matches SET player1_wins = $1, player2_wins = $2, status = $3, winner_id = $4, forfeit_player_id = $5, result_finalized_at = $6 WHERE id = $7`,
+    [player1_wins, player2_wins, status, winner_id, forfeit_player_id, resultFinalizedAt, id]
   );
 }
 
@@ -1715,7 +1715,7 @@ export async function deleteMatchById(id: string): Promise<void> {
 export async function resetMatchToPending(id: string): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `UPDATE matches SET status = 'pending', player1_wins = 0, player2_wins = 0, winner_id = NULL, dq_player_id = NULL, result_finalized_at = NULL WHERE id = $1`,
+    `UPDATE matches SET status = 'pending', player1_wins = 0, player2_wins = 0, winner_id = NULL, forfeit_player_id = NULL, result_finalized_at = NULL WHERE id = $1`,
     [id]
   );
 }
@@ -1822,3 +1822,6 @@ export async function unlockRoundAndLater(
     [tournament_id, tree_id, bracket, round]
   );
 }
+
+
+

@@ -101,3 +101,6 @@ export function normalizeCharacterSelectionConfig(
     total_max_select: totalMax,
   };
 }
+
+
+

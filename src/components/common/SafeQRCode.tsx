@@ -15,3 +15,6 @@ interface SafeQRCodeProps {
 export function SafeQRCode({ value, size }: SafeQRCodeProps) {
   return <QRCodeComponent value={value} size={size} />;
 }
+
+
+

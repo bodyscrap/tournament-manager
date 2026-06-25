@@ -99,8 +99,8 @@ export interface Tournament {
   character_selection_config: TournamentCharacterSelectionConfig | null;
   default_player_side: TournamentDefaultPlayerSide;
   result_auth_mode: MatchActionAuthMode;
+  forfeit_auth_mode: MatchActionAuthMode;
   dq_auth_mode: MatchActionAuthMode;
-  forced_loss_auth_mode: MatchActionAuthMode;
   created_at: string;
 }
 
@@ -119,8 +119,8 @@ export interface TournamentRow {
   character_selection_config_json: string | null;
   default_player_side: TournamentDefaultPlayerSide;
   result_auth_mode: MatchActionAuthMode | null;
+  forfeit_auth_mode: MatchActionAuthMode | null;
   dq_auth_mode: MatchActionAuthMode | null;
-  forced_loss_auth_mode: MatchActionAuthMode | null;
   created_at: string;
 }
 
@@ -180,7 +180,7 @@ export interface TournamentAdminRow {
   created_at: string;
 }
 
-export type MatchActionType = "result" | "dq" | "forced_loss";
+export type MatchActionType = "result" | "forfeit" | "dq";
 export type MatchActionConfirmerType = "none" | "participant" | "admin";
 
 export interface MatchActionLog {
@@ -418,7 +418,7 @@ export interface Match {
   player2_side: MatchPlayerSide;
   status: MatchStatus;
   result_finalized_at?: string | null;
-  dq_player_id: string | null;
+  forfeit_player_id: string | null;
   next_match_id: string | null;       // winner advances here
   next_match_slot: number | null;     // 1 or 2 — which slot (player1 or player2) in next_match
   loser_next_match_id: string | null; // double elim: loser goes here
@@ -443,10 +443,13 @@ export interface MatchRow {
   player2_side: MatchPlayerSide;
   status: MatchStatus;
   result_finalized_at: string | null;
-  dq_player_id: string | null;
+  forfeit_player_id: string | null;
   next_match_id: string | null;
   next_match_slot: number | null;
   loser_next_match_id: string | null;
   loser_next_match_slot: number | null;
 }
+
+
+
 

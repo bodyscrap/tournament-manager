@@ -52,9 +52,9 @@ function attributeLabel(attribute: MessageAttribute): string {
     case "THREAD_RESOLVED":
       return "解決通知";
     case "REMOTE_DQ_REQUEST":
-      return "リモートDQ申請";
+      return "リモート棄権申請";
     case "REMOTE_DQ_APPROVED":
-      return "リモートDQ承認";
+      return "リモート棄権承認";
     default:
       return attribute;
   }
@@ -91,11 +91,15 @@ function MessageListItem({
   entry,
   isSelected,
   isThreadResolved,
+  compact,
+  withHandleSpace,
   onClick,
 }: {
   entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry;
   isSelected: boolean;
   isThreadResolved: boolean;
+  compact?: boolean;
+  withHandleSpace?: boolean;
   onClick: () => void;
 }) {
   const message = entry.message;
@@ -104,15 +108,17 @@ function MessageListItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left p-3 border-b transition-colors ${
+      className={`w-full text-left ${compact ? "p-2" : "p-3"} ${withHandleSpace ? "pr-12 pb-8" : ""} border-b transition-colors ${
         isSelected
           ? "bg-blue-50 border-blue-200"
+          : compact
+          ? "bg-slate-50 hover:bg-slate-100 border-slate-200"
           : "bg-white hover:bg-gray-50 border-gray-200"
       }`}
     >
       <div className="flex items-start gap-2">
         <div className="shrink-0 flex flex-col items-start gap-1">
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${attributeColor(message.attribute)}`}>
+          <span className={`${compact ? "text-[10px]" : "text-xs"} px-2 py-0.5 rounded-full font-medium ${attributeColor(message.attribute)}`}>
             {attributeLabel(message.attribute)}
           </span>
           {isThreadResolved && (
@@ -120,8 +126,8 @@ function MessageListItem({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-gray-900 truncate text-sm">{message.title}</p>
-          <p className="text-xs text-gray-500 mt-0.5 truncate">
+          <p className={`font-semibold text-gray-900 truncate ${compact ? "text-xs" : "text-sm"}`}>{message.title}</p>
+          <p className={`${compact ? "text-[11px]" : "text-xs"} text-gray-500 mt-0.5 truncate`}>
             送信元: {message.eventId}-{message.sourceTournamentId}
           </p>
           {message.matchCardId && (
@@ -129,7 +135,7 @@ function MessageListItem({
           )}
         </div>
       </div>
-      <p className="text-xs text-gray-400 mt-1 text-right">{fmtTime(sentTime)}</p>
+      <p className={`${compact ? "text-[11px]" : "text-xs"} text-gray-400 mt-1 text-right`}>{fmtTime(sentTime)}</p>
     </button>
   );
 }
@@ -356,7 +362,7 @@ function MessageDetailView({
               className="px-2 py-1 text-xs rounded-lg border border-green-300 hover:bg-green-50 text-green-700 disabled:opacity-60"
               disabled={approvingRemoteDq}
             >
-              {approvingRemoteDq ? "承認中..." : "DQ申請を承認"}
+              {approvingRemoteDq ? "承認中..." : "棄権申請を承認"}
             </button>
           )}
           {canReply && (
@@ -421,10 +427,10 @@ function MessageDetailView({
 
         {canRequestRemoteDq && (
           <div>
-            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">リモートDQ申請</h3>
+            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">リモート棄権申請</h3>
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 space-y-2">
               <p className="text-xs text-rose-800">
-                呼び出し対象のユーザーコードを認証すると、DQ申請を送信できます。
+                呼び出し対象のユーザーコードを認証すると、棄権申請を送信できます。
               </p>
               <div className="flex gap-2">
                 <input
@@ -457,7 +463,7 @@ function MessageDetailView({
                   className="px-3 py-1 text-xs rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60"
                   disabled={requestingRemoteDq || !canSubmitRemoteDq}
                 >
-                  {requestingRemoteDq ? "送信中..." : "DQ申請"}
+                  {requestingRemoteDq ? "送信中..." : "棄権申請"}
                 </button>
               </div>
               <p className={`text-xs ${canSubmitRemoteDq ? "text-emerald-700" : "text-rose-700"}`}>
@@ -473,7 +479,7 @@ function MessageDetailView({
 
       <QrScannerDialog
         open={showDqQrScan}
-        title="リモートDQ申請コードを読み取り"
+        title="リモート棄権申請コードを読み取り"
         onClose={() => setShowDqQrScan(false)}
         onDetected={(value) => {
           const extracted = extractUserCode(value);
@@ -795,7 +801,14 @@ export function NotificationPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { tournament, participants } = useAppContext();
-  const { receivedMessages, sentMessages, unmatchedMessages, sendMessage } = useMessageNotification();
+  const {
+    receivedMessages,
+    sentMessages,
+    unmatchedMessages,
+    sendMessage,
+    isReceivedMessageUnread,
+    markReceivedMessageRead,
+  } = useMessageNotification();
 
   const [tab, setTab] = useState<Tab>("received");
   const [showCompose, setShowCompose] = useState(false);
@@ -838,6 +851,49 @@ export function NotificationPage() {
     return [...receivedMessages, ...sentMessages, ...unmatchedMessages].map((entry) => entry.message);
   }, [receivedMessages, sentMessages, unmatchedMessages]);
 
+  const resolvedThreadKeyByMessageId = useMemo(() => {
+    const messageById = new Map(allMessages.map((message) => [message.messageId, message] as const));
+    const cache = new Map<string, string>();
+    const visiting = new Set<string>();
+
+    const resolveThreadKey = (message: NotificationMessage): string => {
+      const cached = cache.get(message.messageId);
+      if (cached) return cached;
+
+      if (visiting.has(message.messageId)) {
+        const fallback = message.rootMessageId ?? message.threadId ?? message.messageId;
+        cache.set(message.messageId, fallback);
+        return fallback;
+      }
+
+      visiting.add(message.messageId);
+
+      // Prefer root linkage first so every reply is grouped under the original thread.
+      let resolved = message.rootMessageId ?? "";
+      if (!resolved && message.parentMessageId) {
+        const parent = messageById.get(message.parentMessageId);
+        if (parent) {
+          resolved = resolveThreadKey(parent);
+        }
+      }
+      if (!resolved) {
+        resolved = message.threadId ?? "";
+      }
+      if (!resolved) {
+        resolved = message.messageId;
+      }
+
+      visiting.delete(message.messageId);
+      cache.set(message.messageId, resolved);
+      return resolved;
+    };
+
+    for (const message of allMessages) {
+      resolveThreadKey(message);
+    }
+    return cache;
+  }, [allMessages]);
+
   const selectedMessage = useMemo(() => {
     return messages.find((m) => m.message.messageId === selectedMessageId) || null;
   }, [messages, selectedMessageId]);
@@ -845,7 +901,11 @@ export function NotificationPage() {
   const threadGroups = useMemo<ThreadGroup[]>(() => {
     const byThread = new Map<string, MessageListEntry[]>();
     for (const entry of messages) {
-      const threadId = entry.message.threadId ?? entry.message.messageId;
+      const threadId =
+        resolvedThreadKeyByMessageId.get(entry.message.messageId) ??
+        entry.message.threadId ??
+        entry.message.rootMessageId ??
+        entry.message.messageId;
       const list = byThread.get(threadId);
       if (list) {
         list.push(entry);
@@ -862,9 +922,11 @@ export function NotificationPage() {
         return tb - ta;
       });
       const latestEntry = sortedByLatest[0];
-      const rootMessageId = latestEntry.message.rootMessageId ?? threadId;
       const rootEntry =
-        sortedByLatest.find((entry) => entry.message.messageId === rootMessageId) ?? null;
+        sortedByLatest.find((entry) => entry.message.messageId === threadId) ??
+        sortedByLatest.find((entry) => entry.message.rootMessageId === threadId) ??
+        sortedByLatest.find((entry) => entry.message.threadId === threadId) ??
+        null;
       const latestTime = new Date(latestEntry.message.sentAt ?? latestEntry.message.timestamp).getTime();
 
       groups.push({
@@ -877,14 +939,23 @@ export function NotificationPage() {
     }
 
     return groups.sort((a, b) => b.latestTime - a.latestTime);
-  }, [messages]);
+  }, [messages, resolvedThreadKeyByMessageId]);
 
-  const selectedThreadId = selectedMessage?.message.threadId ?? selectedMessage?.message.messageId ?? null;
+  const selectedThreadId = selectedMessage
+    ? resolvedThreadKeyByMessageId.get(selectedMessage.message.messageId) ??
+      selectedMessage.message.threadId ??
+      selectedMessage.message.rootMessageId ??
+      selectedMessage.message.messageId
+    : null;
 
   const resolvedThreadMap = useMemo(() => {
     const resolved = new Map<string, NotificationMessage>();
     for (const message of allMessages) {
-      const threadId = message.threadId ?? message.messageId;
+      const threadId =
+        resolvedThreadKeyByMessageId.get(message.messageId) ??
+        message.threadId ??
+        message.rootMessageId ??
+        message.messageId;
       const isResolvedEvent = message.attribute === "THREAD_RESOLVED" || message.threadResolved === true;
       if (!isResolvedEvent) continue;
 
@@ -901,14 +972,34 @@ export function NotificationPage() {
       }
     }
     return resolved;
-  }, [allMessages]);
+  }, [allMessages, resolvedThreadKeyByMessageId]);
 
   const selectedRootMessage = useMemo(() => {
-    if (!selectedMessage) return null;
-    const current = selectedMessage.message;
-    const rootMessageId = current.rootMessageId ?? current.threadId ?? current.messageId;
-    return allMessages.find((message) => message.messageId === rootMessageId) ?? null;
-  }, [allMessages, selectedMessage]);
+    if (!selectedMessage || !selectedThreadId) return null;
+    const inThread = allMessages.filter(
+      (message) =>
+        (resolvedThreadKeyByMessageId.get(message.messageId) ??
+          message.threadId ??
+          message.rootMessageId ??
+          message.messageId) === selectedThreadId
+    );
+    if (inThread.length === 0) return null;
+
+    const explicitRoot =
+      inThread.find((message) => message.messageId === selectedThreadId) ??
+      inThread.find((message) => message.rootMessageId === selectedThreadId) ??
+      inThread.find((message) => message.threadId === selectedThreadId) ??
+      null;
+
+    if (explicitRoot) return explicitRoot;
+
+    const oldest = [...inThread].sort((a, b) => {
+      const ta = new Date(a.sentAt ?? a.timestamp).getTime();
+      const tb = new Date(b.sentAt ?? b.timestamp).getTime();
+      return ta - tb;
+    })[0];
+    return oldest ?? selectedMessage.message;
+  }, [allMessages, selectedMessage, selectedThreadId, resolvedThreadKeyByMessageId]);
 
   const isSelectedThreadResolved = selectedThreadId ? resolvedThreadMap.has(selectedThreadId) : false;
   const canResolveSelectedThread = !!(
@@ -942,6 +1033,13 @@ export function NotificationPage() {
       setSelectedMessageId(messages[0].message.messageId);
     }
   }, [messages, selectedMessageId]);
+
+  useEffect(() => {
+    if (tab !== "received" || !selectedMessage) return;
+    const selectedId = selectedMessage.message.messageId;
+    if (!isReceivedMessageUnread(selectedId)) return;
+    markReceivedMessageRead(selectedId);
+  }, [tab, selectedMessage, isReceivedMessageUnread, markReceivedMessageRead]);
 
   useEffect(() => {
     setExpandedThreadIds((prev) => {
@@ -1036,7 +1134,7 @@ export function NotificationPage() {
     const rootMessageId = baseMessage.rootMessageId ?? baseMessage.threadId ?? baseMessage.messageId;
     const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
     if (!rootMessage) throw new Error("スレッド先頭メッセージが見つかりません");
-    if (rootMessage.attribute !== "CALL") throw new Error("呼び出しスレッドでのみDQ申請できます");
+    if (rootMessage.attribute !== "CALL") throw new Error("呼び出しスレッドでのみ棄権申請できます");
 
     const expected = extractUserCode(rootMessage.targetUserCode ?? "");
     const actual = extractUserCode(enteredUserCode);
@@ -1052,8 +1150,12 @@ export function NotificationPage() {
     try {
       await sendMessage({
         attribute: "REMOTE_DQ_REQUEST",
-        title: `DQ申請: ${rootMessage.title}`,
-        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がDQを申請しました。`,
+        title: `棄権申請: ${rootMessage.title}`,
+        body:
+          `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が棄権を申請しました。\n` +
+          `対象カードID: ${rootMessage.matchCardId}\n` +
+          `対象プレイヤーID: ${rootMessage.targetPlayerId}\n` +
+          `対象プレイヤー名: ${rootMessage.targetPlayerName ?? "(不明)"}`,
         targetTournamentIds: [rootMessage.sourceTournamentId],
         threadId,
         parentMessageId: baseMessage.messageId,
@@ -1091,8 +1193,8 @@ export function NotificationPage() {
     try {
       await sendMessage({
         attribute: "REMOTE_DQ_APPROVED",
-        title: `DQ承認: ${rootMessage.title}`,
-        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がDQ申請を承認しました。`,
+        title: `棄権承認: ${rootMessage.title}`,
+        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が棄権申請を承認しました。`,
         targetTournamentIds: [requestFromTournamentId],
         threadId,
         parentMessageId: requestMessage.messageId,
@@ -1197,76 +1299,69 @@ export function NotificationPage() {
           ) : (
             <div className="flex-1 overflow-y-auto">
               {threadGroups.map((group) => {
-                const representative = group.latestEntry;
+                const representative = group.rootEntry ?? group.latestEntry;
                 const representativeId = representative.message.messageId;
-                const isExpanded = expandedThreadIds.has(group.threadId);
-                const isThreadSelected = group.entries.some(
-                  (entry) => entry.message.messageId === selectedMessage?.message.messageId
-                );
+                const hasChildren = group.entries.length > 1;
+                const isExpanded = hasChildren && expandedThreadIds.has(group.threadId);
                 const isThreadResolved = resolvedThreadMap.has(group.threadId);
-                const rootTitle = group.rootEntry?.message.title ?? representative.message.title;
+                const hasNewInThread =
+                  group.entries.some((entry) => isReceivedMessageUnread(entry.message.messageId));
 
                 return (
-                  <div key={group.threadId} className="border-b border-gray-200">
-                    <div className="flex items-center bg-gray-50">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedMessageId(representativeId);
-                        }}
-                        className={`flex-1 min-w-0 px-2 py-2 text-left hover:bg-gray-100 ${
-                          isThreadSelected ? "bg-blue-50" : ""
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 font-medium">
-                            {group.entries.length}件
-                          </span>
-                          {isThreadResolved && (
-                            <span className="text-[11px] text-emerald-700 font-medium">✓ 解決</span>
-                          )}
-                          <p className="text-[11px] text-gray-500 truncate" title={rootTitle}>
-                            スレッド: {rootTitle}
-                          </p>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedThreadIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(group.threadId)) {
-                              next.delete(group.threadId);
-                            } else {
-                              next.add(group.threadId);
-                            }
-                            return next;
-                          });
-                        }}
-                        className="px-2 py-2 text-xs text-gray-600 hover:text-gray-800"
-                        title={isExpanded ? "折りたたむ" : "展開する"}
-                      >
-                        {isExpanded ? "▾" : "▸"}
-                      </button>
-                    </div>
+                  <div key={group.threadId} className="border-b border-gray-200 relative">
+                    {hasNewInThread && (
+                      <span
+                        className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white z-10"
+                        title="このスレッドに新着があります"
+                      />
+                    )}
 
-                    <MessageListItem
-                      key={representativeId}
-                      entry={representative}
-                      isSelected={selectedMessage?.message.messageId === representativeId}
-                      isThreadResolved={isThreadResolved}
-                      onClick={() => setSelectedMessageId(representativeId)}
-                    />
+                    <div className="relative">
+                      <MessageListItem
+                        key={representativeId}
+                        entry={representative}
+                        isSelected={selectedMessage?.message.messageId === representativeId}
+                        isThreadResolved={isThreadResolved}
+                        withHandleSpace={hasChildren}
+                        onClick={() => setSelectedMessageId(representativeId)}
+                      />
+
+                      {hasChildren && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedThreadIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(group.threadId)) {
+                                next.delete(group.threadId);
+                              } else {
+                                next.add(group.threadId);
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`absolute right-2 bottom-2 px-2 py-1 rounded-md text-xs font-bold shadow-sm border transition-colors ${
+                            isExpanded
+                              ? "bg-blue-600 text-white border-blue-700"
+                              : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                          }`}
+                          title={isExpanded ? "返信を折りたたむ" : "返信を展開する"}
+                        >
+                          {isExpanded ? "▾" : "▸"}
+                        </button>
+                      )}
+                    </div>
 
                     {isExpanded &&
                       group.entries
                         .filter((entry) => entry.message.messageId !== representativeId)
                         .map((entry) => (
-                          <div key={entry.message.messageId} className="ml-3 border-l border-gray-200">
+                          <div key={entry.message.messageId} className="ml-5 border-l-4 border-blue-200 bg-slate-50">
                             <MessageListItem
                               entry={entry}
                               isSelected={selectedMessage?.message.messageId === entry.message.messageId}
                               isThreadResolved={isThreadResolved}
+                              compact
                               onClick={() => setSelectedMessageId(entry.message.messageId)}
                             />
                           </div>
@@ -1320,3 +1415,7 @@ export function NotificationPage() {
     </div>
   );
 }
+
+
+
+

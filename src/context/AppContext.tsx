@@ -177,8 +177,8 @@ interface AppContextValue {
     character_selection_config: TournamentCharacterSelectionConfig | null,
     default_player_side: TournamentDefaultPlayerSide,
     result_auth_mode: MatchActionAuthMode,
-    dq_auth_mode: MatchActionAuthMode,
-    forced_loss_auth_mode: MatchActionAuthMode
+    forfeit_auth_mode: MatchActionAuthMode,
+    dq_auth_mode: MatchActionAuthMode
   ) => Promise<void>;
   removeTournament: (id?: string) => Promise<void>;
   addParticipant: (
@@ -213,8 +213,8 @@ interface AppContextValue {
     character_selection_config: TournamentCharacterSelectionConfig | null,
     default_player_side: TournamentDefaultPlayerSide,
     result_auth_mode: MatchActionAuthMode,
-    dq_auth_mode: MatchActionAuthMode,
-    forced_loss_auth_mode: MatchActionAuthMode
+    forfeit_auth_mode: MatchActionAuthMode,
+    dq_auth_mode: MatchActionAuthMode
   ) => Promise<void>;
 
   // Bracket trees
@@ -230,7 +230,7 @@ interface AppContextValue {
     match: Match,
     player1_wins: number,
     player2_wins: number,
-    dq_player_ids: string[],
+    forfeit_player_ids: string[],
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
     player2_character_name?: string | null,
@@ -274,7 +274,7 @@ interface AppContextValue {
     match: Match,
     player1_wins: number,
     player2_wins: number,
-    dq_player_ids: string[],
+    forfeit_player_ids: string[],
     forced_loser_id?: string | null,
     player1_character_name?: string | null,
     player2_character_name?: string | null,
@@ -526,8 +526,8 @@ async function ensureAdminCodes(
 async function writeMatchActionLogs(
   tournamentId: string,
   matchId: string,
-  dqPlayerIds: string[],
-  forcedLoserId: string | null,
+  forfeitPlayerIds: string[],
+  dqLoserId: string | null,
   auth?: ScoreActionAuth
 ): Promise<void> {
   const noneConfirmer = {
@@ -536,14 +536,14 @@ async function writeMatchActionLogs(
     name: "認証なし",
     code: "",
   };
-  if (forcedLoserId) {
+  if (dqLoserId) {
     const forcedConfirmer = auth?.forcedLossConfirmer ?? noneConfirmer;
     await insertMatchActionLog(
       uuidv4(),
       tournamentId,
       matchId,
-      "forced_loss",
-      forcedLoserId,
+      "dq",
+      dqLoserId,
       forcedConfirmer.type,
       forcedConfirmer.id,
       forcedConfirmer.name,
@@ -552,14 +552,14 @@ async function writeMatchActionLogs(
     return;
   }
 
-  if (dqPlayerIds.length > 0) {
+  if (forfeitPlayerIds.length > 0) {
     const dqConfirmer = auth?.dqConfirmer ?? noneConfirmer;
-    for (const targetPlayerId of dqPlayerIds) {
+    for (const targetPlayerId of forfeitPlayerIds) {
       await insertMatchActionLog(
         uuidv4(),
         tournamentId,
         matchId,
-        "dq",
+        "forfeit",
         targetPlayerId,
         dqConfirmer.type,
         dqConfirmer.id,
@@ -589,13 +589,13 @@ function resolveMatchOutcome(
   allMatches: Match[],
   player1_wins: number,
   player2_wins: number,
-  dq_player_ids: string[],
-  forced_loser_id: string | null = null
+  forfeit_player_ids: string[],
+  dq_loser_id: string | null = null
 ): {
   status: "pending" | "in_progress" | "completed";
   winner_id: string | null;
   loser_id: string | null;
-  dq_player_id: string | null;
+  forfeit_player_id: string | null;
 } {
   const incomingBySlot = buildIncomingBySlot(allMatches);
   const incoming = incomingBySlot.get(match.id) ?? { slot1: false, slot2: false };
@@ -604,7 +604,7 @@ function resolveMatchOutcome(
   const p2Id = match.player2_id;
 
   const dqSet = new Set(
-    dq_player_ids.filter(
+    forfeit_player_ids.filter(
       (id): id is string => !!id && (id === p1Id || id === p2Id)
     )
   );
@@ -622,27 +622,27 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: null,
       loser_id: null,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
 
-  // 両者DQは勝者なしで試合完了。次ラウンド側は BYE/TBD 扱いにする。
+  // 両者棄権は勝者なしで試合完了。次ラウンド側は BYE/TBD 扱いにする。
   if (p1Dq && p2Dq) {
     return {
       status: "completed",
       winner_id: null,
       loser_id: null,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
 
-  // 片側DQは得失ラウンドに関係なく反対側を勝者にする。
+  // 片側棄権は得失ラウンドに関係なく反対側を勝者にする。
   if (p1Dq) {
     return {
       status: "completed",
       winner_id: p2Id,
       loser_id: p1Id,
-      dq_player_id: p1Id,
+      forfeit_player_id: p1Id,
     };
   }
   if (p2Dq) {
@@ -650,18 +650,18 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p1Id,
       loser_id: p2Id,
-      dq_player_id: p2Id,
+      forfeit_player_id: p2Id,
     };
   }
 
-  // スコア同点時のみ、強制敗北を適用する(入力済みスコア優先)。
-  if (player1_wins === player2_wins && forced_loser_id && (forced_loser_id === p1Id || forced_loser_id === p2Id)) {
-    const winnerId = forced_loser_id === p1Id ? p2Id : p1Id;
+  // スコア同点時のみ、DQを適用する(入力済みスコア優先)。
+  if (player1_wins === player2_wins && dq_loser_id && (dq_loser_id === p1Id || dq_loser_id === p2Id)) {
+    const winnerId = dq_loser_id === p1Id ? p2Id : p1Id;
     return {
       status: "completed",
       winner_id: winnerId,
-      loser_id: forced_loser_id,
-      dq_player_id: null,
+      loser_id: dq_loser_id,
+      forfeit_player_id: null,
     };
   }
 
@@ -676,7 +676,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p2Id,
       loser_id: p1Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
   if (p2AutoWin && !p1AutoWin && player1_wins > player2_wins) {
@@ -684,7 +684,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p1Id,
       loser_id: p2Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
 
@@ -693,7 +693,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p1Id,
       loser_id: p2Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
   if (p2AutoWin && !p1AutoWin) {
@@ -701,7 +701,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p2Id,
       loser_id: p1Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
 
@@ -711,7 +711,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p1Id,
       loser_id: p2Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
   if (player2_wins > player1_wins && p2Id) {
@@ -719,7 +719,7 @@ function resolveMatchOutcome(
       status: "completed",
       winner_id: p2Id,
       loser_id: p1Id,
-      dq_player_id: null,
+      forfeit_player_id: null,
     };
   }
 
@@ -727,7 +727,7 @@ function resolveMatchOutcome(
     status: "in_progress",
     winner_id: null,
     loser_id: null,
-    dq_player_id: null,
+    forfeit_player_id: null,
   };
 }
 
@@ -1110,8 +1110,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_selection_config: TournamentCharacterSelectionConfig | null,
       default_player_side: TournamentDefaultPlayerSide,
       result_auth_mode: MatchActionAuthMode,
-      dq_auth_mode: MatchActionAuthMode,
-      forced_loss_auth_mode: MatchActionAuthMode
+      forfeit_auth_mode: MatchActionAuthMode,
+      dq_auth_mode: MatchActionAuthMode
     ) => {
       const id = uuidv4();
       const normalizedEventCode = normalizeEventCode(event_code);
@@ -1135,8 +1135,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
         default_player_side,
         result_auth_mode,
-        dq_auth_mode,
-        forced_loss_auth_mode
+        forfeit_auth_mode,
+        dq_auth_mode
       );
 
       try {
@@ -1442,8 +1442,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tournament.character_selection_config,
       tournament.default_player_side,
       tournament.result_auth_mode,
-      tournament.dq_auth_mode,
-      tournament.forced_loss_auth_mode
+      tournament.forfeit_auth_mode,
+      tournament.dq_auth_mode
     );
 
     await deleteMatchesByTournament(tournament.id);
@@ -1500,8 +1500,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tournament.character_selection_config,
         tournament.default_player_side,
         tournament.result_auth_mode,
-        tournament.dq_auth_mode,
-        tournament.forced_loss_auth_mode
+        tournament.forfeit_auth_mode,
+        tournament.dq_auth_mode
       );
       await fetchTournament();
     },
@@ -1521,8 +1521,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       character_selection_config: TournamentCharacterSelectionConfig | null,
       default_player_side: TournamentDefaultPlayerSide,
       result_auth_mode: MatchActionAuthMode,
-      dq_auth_mode: MatchActionAuthMode,
-      forced_loss_auth_mode: MatchActionAuthMode
+      forfeit_auth_mode: MatchActionAuthMode,
+      dq_auth_mode: MatchActionAuthMode
     ) => {
       if (!tournament) return;
       const normalizedEventCode = normalizeEventCode(event_code);
@@ -1545,8 +1545,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
         default_player_side,
         result_auth_mode,
-        dq_auth_mode,
-        forced_loss_auth_mode
+        forfeit_auth_mode,
+        dq_auth_mode
       );
 
       if (
@@ -1667,7 +1667,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               player1_wins: 0,
               player2_wins: 0,
               winner_id: null,
-              dq_player_id: null,
+              forfeit_player_id: null,
               player1_side: nextSides.player1_side,
               player2_side: nextSides.player2_side,
             }
@@ -1755,7 +1755,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       match: Match,
       player1_wins: number,
       player2_wins: number,
-      dq_player_ids: string[],
+      forfeit_player_ids: string[],
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
       player2_character_name: string | null = null,
@@ -1778,12 +1778,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         validatedP2Character
       );
 
-      const { status, winner_id, loser_id, dq_player_id } = resolveMatchOutcome(
+      const { status, winner_id, loser_id, forfeit_player_id } = resolveMatchOutcome(
         match,
         matches,
         player1_wins,
         player2_wins,
-        dq_player_ids,
+        forfeit_player_ids,
         forced_loser_id
       );
 
@@ -1793,14 +1793,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         player2_wins,
         status,
         winner_id,
-        dq_player_id
+        forfeit_player_id
       );
 
       if (match.status !== "completed" && status === "completed") {
         await writeMatchActionLogs(
           tournament.id,
           match.id,
-          dq_player_ids,
+          forfeit_player_ids,
           forced_loser_id,
           auth
         );
@@ -1951,7 +1951,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         player1_side: "-",
         player2_side: "-",
         status: "pending",
-        dq_player_id: null,
+        forfeit_player_id: null,
         next_match_id: null,
         next_match_slot: null,
         loser_next_match_id: null,
@@ -1969,7 +1969,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       match: Match,
       player1_wins: number,
       player2_wins: number,
-      dq_player_ids: string[],
+      forfeit_player_ids: string[],
       forced_loser_id: string | null = null,
       player1_character_name: string | null = null,
       player2_character_name: string | null = null,
@@ -1995,14 +1995,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const {
         winner_id: newWinnerId,
         loser_id: newLoserId,
-        dq_player_id,
+        forfeit_player_id,
         status: resolvedStatus,
       } = resolveMatchOutcome(
         match,
         matches,
         player1_wins,
         player2_wins,
-        dq_player_ids,
+        forfeit_player_ids,
         forced_loser_id
       );
 
@@ -2014,7 +2014,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : match.player1_id
           : null;
 
-      const bothDq = dq_player_ids.length >= 2;
+      const bothDq = forfeit_player_ids.length >= 2;
       const newStatus =
         resolvedStatus === "completed" || newWinnerId || newLoserId || bothDq
           ? "completed"
@@ -2038,13 +2038,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await performCascadeReset(match, oldWinnerId, oldLoserId, matches);
 
         // Update this match with the corrected result
-        await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
+        await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, forfeit_player_id);
 
         if (match.status !== "completed" && newStatus === "completed") {
           await writeMatchActionLogs(
             tournament.id,
             match.id,
-            dq_player_ids,
+            forfeit_player_ids,
             forced_loser_id,
             auth
           );
@@ -2092,12 +2092,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         // Winner unchanged — just update the scores
-        await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, dq_player_id);
+        await updateMatchScore(match.id, player1_wins, player2_wins, newStatus, newWinnerId, forfeit_player_id);
         if (match.status !== "completed" && newStatus === "completed") {
           await writeMatchActionLogs(
             tournament.id,
             match.id,
-            dq_player_ids,
+            forfeit_player_ids,
             forced_loser_id,
             auth
           );
@@ -2235,7 +2235,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         player1_side: "-",
         player2_side: "-",
         status: "pending",
-        dq_player_id: null,
+        forfeit_player_id: null,
         next_match_id: null,
         next_match_slot: null,
         loser_next_match_id: null,
@@ -2273,7 +2273,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           player1_side: "-",
           player2_side: "-",
           status: "pending",
-          dq_player_id: null,
+          forfeit_player_id: null,
           next_match_id: null,
           next_match_slot: null,
           loser_next_match_id: null,
@@ -2523,3 +2523,6 @@ export function useAppContext(): AppContextValue {
   if (!ctx) throw new Error("useAppContext must be used within AppProvider");
   return ctx;
 }
+
+
+

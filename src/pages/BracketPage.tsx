@@ -49,17 +49,17 @@ export function BracketPage() {
   const [p2Wins, setP2Wins] = useState(0);
   const [p1CharName, setP1CharName] = useState("");
   const [p2CharName, setP2CharName] = useState("");
-  const [p1Dq, setP1Dq] = useState(false);
-  const [p2Dq, setP2Dq] = useState(false);
-  const [forcedLoserId, setForcedLoserId] = useState<string | null>(null);
+  const [p1Forfeit, setP1Forfeit] = useState(false);
+  const [p2Forfeit, setP2Forfeit] = useState(false);
+  const [dqLoserId, setDqLoserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingEdit, setConfirmingEdit] = useState(false);
   const [pendingEdit, setPendingEdit] = useState<{
-    match: Match; p1Wins: number; p2Wins: number; dqPlayerIds: string[]; forcedLoserId: string | null;
+    match: Match; p1Wins: number; p2Wins: number; forfeitPlayerIds: string[]; dqLoserId: string | null;
   } | null>(null);
   const [confirmingBye, setConfirmingBye] = useState(false);
   const [pendingBye, setPendingBye] = useState<{
-    match: Match; p1Wins: number; p2Wins: number; dqPlayerIds: string[]; forcedLoserId: string | null;
+    match: Match; p1Wins: number; p2Wins: number; forfeitPlayerIds: string[]; dqLoserId: string | null;
   } | null>(null);
 
   // Match search dialog state
@@ -133,8 +133,8 @@ export function BracketPage() {
   };
 
   const getActionTypeLabel = (actionType: string): string => {
+    if (actionType === "forfeit") return "棄権";
     if (actionType === "dq") return "DQ";
-    if (actionType === "forced_loss") return "強制敗北";
     return "結果確定";
   };
 
@@ -282,9 +282,9 @@ export function BracketPage() {
       (match.player2_id ? playerMap.get(match.player2_id)?.character_name ?? null : null);
     setP1CharName(p1DefaultChar ?? "");
     setP2CharName(p2DefaultChar ?? "");
-    setP1Dq(!!match.player1_id && match.dq_player_id === match.player1_id);
-    setP2Dq(!!match.player2_id && match.dq_player_id === match.player2_id);
-    setForcedLoserId(null);
+    setP1Forfeit(!!match.player1_id && match.forfeit_player_id === match.player1_id);
+    setP2Forfeit(!!match.player2_id && match.forfeit_player_id === match.player2_id);
+    setDqLoserId(null);
     setConfirmAuthCode("");
     setAuthenticatedPlayerIds([]);
     setAuthenticatedAdminIds([]);
@@ -341,13 +341,13 @@ export function BracketPage() {
     }
 
     handleMatchClick(targetMatch);
-    setForcedLoserId(null);
-    setP1Dq(targetMatch.player1_id === dqPlayerId);
-    setP2Dq(targetMatch.player2_id === dqPlayerId);
+    setDqLoserId(null);
+    setP1Forfeit(targetMatch.player1_id === dqPlayerId);
+    setP2Forfeit(targetMatch.player2_id === dqPlayerId);
     setConfirmAuthCode(dqUserCode);
     const autoAuth = authenticateCodeForMatch(targetMatch, dqUserCode, { silent: true });
     if (!autoAuth.ok) {
-      alert(autoAuth.message ?? "リモートDQ用コードの自動認証に失敗しました");
+      alert(autoAuth.message ?? "リモート棄権用コードの自動認証に失敗しました");
     }
     clearRemoteDqParams();
   }, [location.search, tournamentMatches, navigate]);
@@ -356,23 +356,23 @@ export function BracketPage() {
     m: Match,
     p1w: number,
     p2w: number,
-    dqPlayerIds: string[],
-    forcedLoser: string | null
+    forfeitPlayerIds: string[],
+    dqLoser: string | null
   ): string | null => {
     const incoming = incomingBySlot.get(m.id) ?? { slot1: false, slot2: false };
     const p1Id = m.player1_id;
     const p2Id = m.player2_id;
-    const p1Dq = !!p1Id && dqPlayerIds.includes(p1Id);
-    const p2Dq = !!p2Id && dqPlayerIds.includes(p2Id);
+    const p1Forfeit = !!p1Id && forfeitPlayerIds.includes(p1Id);
+    const p2Forfeit = !!p2Id && forfeitPlayerIds.includes(p2Id);
 
-    // 強制敗北とDQが同時に指定された場合は強制敗北を優先
-    if (p1w === p2w && forcedLoser && (forcedLoser === p1Id || forcedLoser === p2Id)) {
-      return forcedLoser === p1Id ? p2Id : p1Id;
+    // 棄権とDQが同時に指定された場合はDQを優先
+    if (p1w === p2w && dqLoser && (dqLoser === p1Id || dqLoser === p2Id)) {
+      return dqLoser === p1Id ? p2Id : p1Id;
     }
 
-    if (p1Dq && p2Dq) return null;
-    if (p1Dq) return p2Id;
-    if (p2Dq) return p1Id;
+    if (p1Forfeit && p2Forfeit) return null;
+    if (p1Forfeit) return p2Id;
+    if (p2Forfeit) return p1Id;
 
     const p1IsReal = !!p1Id && !p1Id.startsWith("dummy-");
     const p2IsReal = !!p2Id && !p2Id.startsWith("dummy-");
@@ -424,18 +424,18 @@ export function BracketPage() {
     return true;
   };
 
-  const buildScoreAuth = (match: Match, dqPlayerIds: string[], forcedLoser: string | null) => {
-    const hasByeDq = dqPlayerIds.some((id) => {
+  const buildScoreAuth = (match: Match, forfeitPlayerIds: string[], dqLoser: string | null) => {
+    const hasByeForfeit = forfeitPlayerIds.some((id) => {
       if (!id) return false;
       return !playerMap.has(id);
     });
 
     const resultAuthMode = tournament?.result_auth_mode ?? "none";
-    const dqAuthMode = tournament?.dq_auth_mode ?? "target_player";
-    const forcedLossAuthMode = tournament?.forced_loss_auth_mode ?? "admin";
-    const requiresForcedAuth = !!forcedLoser && forcedLossAuthMode !== "none";
-    const requiresDqAuth = dqPlayerIds.length > 0 && !hasByeDq && dqAuthMode !== "none" && !requiresForcedAuth;
-    const requiresResultAuth = !forcedLoser && dqPlayerIds.length === 0 && resultAuthMode !== "none";
+    const forfeitAuthMode = tournament?.forfeit_auth_mode ?? "target_player";
+    const dqAuthMode = tournament?.dq_auth_mode ?? "admin";
+    const requiresDqAuth = !!dqLoser && dqAuthMode !== "none";
+    const requiresForfeitAuth = forfeitPlayerIds.length > 0 && !hasByeForfeit && forfeitAuthMode !== "none" && !requiresDqAuth;
+    const requiresResultAuth = !dqLoser && forfeitPlayerIds.length === 0 && resultAuthMode !== "none";
 
     const getAdminConfirmer = (): ScannedCodeInfo | null => {
       const preferredAdminId =
@@ -470,49 +470,49 @@ export function BracketPage() {
     const p2Confirmer = match.player2_id ? getParticipantConfirmer(match.player2_id) : null;
 
     let resultConfirmer: ScannedCodeInfo | null = null;
-    let dqConfirmer: ScannedCodeInfo | null = null;
-    let forcedConfirmer: ScannedCodeInfo | null = null;
+    let forfeitConfirmer: ScannedCodeInfo | null = null;
+    let dqConfirmerLocal: ScannedCodeInfo | null = null;
 
-    if (requiresDqAuth) {
-      const targetParticipantConfirmer = dqPlayerIds
+    if (requiresForfeitAuth) {
+      const targetParticipantConfirmer = forfeitPlayerIds
         .map((id) => getParticipantConfirmer(id))
         .find((c): c is ScannedCodeInfo => !!c);
-      if (dqAuthMode === "admin") {
+      if (forfeitAuthMode === "admin") {
         if (!adminConfirmer) {
-          throw new Error("DQ確定には認証済み管理者が必要です");
+          throw new Error("棄権確定には認証済み管理者が必要です");
         }
-        dqConfirmer = adminConfirmer;
-      } else if (dqAuthMode === "auth") {
-        dqConfirmer = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
-        if (!dqConfirmer) {
-          throw new Error("DQ確定には認証が必要です");
+        forfeitConfirmer = adminConfirmer;
+      } else if (forfeitAuthMode === "auth") {
+        forfeitConfirmer = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
+        if (!forfeitConfirmer) {
+          throw new Error("棄権確定には認証が必要です");
         }
       } else {
         // target_player / legacy admin_or_participant
-        dqConfirmer = adminConfirmer ?? targetParticipantConfirmer ?? null;
-        if (!dqConfirmer) {
-          throw new Error("DQ確定には対象プレイヤーまたは管理者の認証が必要です");
+        forfeitConfirmer = adminConfirmer ?? targetParticipantConfirmer ?? null;
+        if (!forfeitConfirmer) {
+          throw new Error("棄権確定には対象プレイヤーまたは管理者の認証が必要です");
         }
       }
     }
 
-    if (requiresForcedAuth) {
-      const targetParticipantConfirmer = forcedLoser ? getParticipantConfirmer(forcedLoser) : null;
-      if (forcedLossAuthMode === "admin") {
+    if (requiresDqAuth) {
+      const targetParticipantConfirmer = dqLoser ? getParticipantConfirmer(dqLoser) : null;
+      if (dqAuthMode === "admin") {
         if (!adminConfirmer) {
-          throw new Error("強制敗北の確定には認証済み管理者が必要です");
+          throw new Error("DQ確定には認証済み管理者が必要です");
         }
-        forcedConfirmer = adminConfirmer;
-      } else if (forcedLossAuthMode === "auth") {
-        forcedConfirmer = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
-        if (!forcedConfirmer) {
-          throw new Error("強制敗北の確定には認証が必要です");
+        dqConfirmerLocal = adminConfirmer;
+      } else if (dqAuthMode === "auth") {
+        dqConfirmerLocal = adminConfirmer ?? p1Confirmer ?? p2Confirmer ?? null;
+        if (!dqConfirmerLocal) {
+          throw new Error("DQ確定には認証が必要です");
         }
       } else {
         // target_player / legacy admin_or_participant
-        forcedConfirmer = adminConfirmer ?? targetParticipantConfirmer ?? null;
-        if (!forcedConfirmer) {
-          throw new Error("強制敗北の確定には対象プレイヤーまたは管理者の認証が必要です");
+        dqConfirmerLocal = adminConfirmer ?? targetParticipantConfirmer ?? null;
+        if (!dqConfirmerLocal) {
+          throw new Error("DQ確定には対象プレイヤーまたは管理者の認証が必要です");
         }
       }
     }
@@ -573,8 +573,8 @@ export function BracketPage() {
 
     return {
       resultConfirmer,
-      dqConfirmer,
-      forcedLossConfirmer: forcedConfirmer,
+      forfeitConfirmer,
+      dqConfirmer: dqConfirmerLocal,
     };
   };
 
@@ -611,16 +611,16 @@ export function BracketPage() {
   const handleSave = async () => {
     if (!selectedMatch || !tournament || isReadOnly) return;
     if (!validateRequiredMatchCharacters(selectedMatch)) return;
-    const rawDqPlayerIds = [
-      p1Dq ? selectedMatch.player1_id : null,
-      p2Dq ? selectedMatch.player2_id : null,
+    const rawForfeitPlayerIds = [
+      p1Forfeit ? selectedMatch.player1_id : null,
+      p2Forfeit ? selectedMatch.player2_id : null,
     ].filter((id): id is string => !!id);
-    const hasForcedLoss = !!forcedLoserId;
-    const dqPlayerIds = hasForcedLoss ? [] : rawDqPlayerIds;
-    const appliedForcedLoserId = hasForcedLoss ? forcedLoserId : null;
-    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null; forcedLossConfirmer?: ScannedCodeInfo | null };
+    const hasDqLoss = !!dqLoserId;
+    const forfeitPlayerIds = hasDqLoss ? [] : rawForfeitPlayerIds;
+    const appliedDqLoserId = hasDqLoss ? dqLoserId : null;
+    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; forfeitConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null };
     try {
-      scoreAuth = buildScoreAuth(selectedMatch, dqPlayerIds, appliedForcedLoserId);
+      scoreAuth = buildScoreAuth(selectedMatch, forfeitPlayerIds, appliedDqLoserId);
     } catch (err) {
       alert(err instanceof Error ? err.message : "認証に失敗しました");
       return;
@@ -636,9 +636,9 @@ export function BracketPage() {
       (selectedMatch.player1_id === null && selectedMatch.player2_id !== null && !incoming.slot1);
 
     if (selectedMatch.status === "completed") {
-      const newWinner = computeNewWinner(selectedMatch, p1Wins, p2Wins, dqPlayerIds, appliedForcedLoserId);
+      const newWinner = computeNewWinner(selectedMatch, p1Wins, p2Wins, forfeitPlayerIds, appliedDqLoserId);
       if (newWinner !== selectedMatch.winner_id) {
-        setPendingEdit({ match: selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId: appliedForcedLoserId });
+        setPendingEdit({ match: selectedMatch, p1Wins, p2Wins, forfeitPlayerIds, dqLoserId: appliedDqLoserId });
         setConfirmingEdit(true);
         return;
       }
@@ -648,8 +648,8 @@ export function BracketPage() {
           selectedMatch,
           p1Wins,
           p2Wins,
-          dqPlayerIds,
-          appliedForcedLoserId,
+          forfeitPlayerIds,
+          appliedDqLoserId,
           p1CharName.trim() || null,
           p2CharName.trim() || null,
           scoreAuth
@@ -662,7 +662,7 @@ export function BracketPage() {
     }
 
     if (isByeMatch) {
-      setPendingBye({ match: selectedMatch, p1Wins, p2Wins, dqPlayerIds, forcedLoserId: appliedForcedLoserId });
+      setPendingBye({ match: selectedMatch, p1Wins, p2Wins, forfeitPlayerIds, dqLoserId: appliedDqLoserId });
       setConfirmingBye(true);
       return;
     }
@@ -676,8 +676,8 @@ export function BracketPage() {
         selectedMatch,
         p1Wins,
         p2Wins,
-        dqPlayerIds,
-        appliedForcedLoserId,
+        forfeitPlayerIds,
+        appliedDqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
         scoreAuth
@@ -691,9 +691,9 @@ export function BracketPage() {
   const handleConfirmCorrect = async () => {
     if (!pendingEdit) return;
     if (!validateRequiredMatchCharacters(pendingEdit.match)) return;
-    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null; forcedLossConfirmer?: ScannedCodeInfo | null };
+    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; forfeitConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null };
     try {
-      scoreAuth = buildScoreAuth(pendingEdit.match, pendingEdit.dqPlayerIds, pendingEdit.forcedLoserId);
+      scoreAuth = buildScoreAuth(pendingEdit.match, pendingEdit.forfeitPlayerIds, pendingEdit.dqLoserId);
     } catch (err) {
       alert(err instanceof Error ? err.message : "認証に失敗しました");
       return;
@@ -704,8 +704,8 @@ export function BracketPage() {
         pendingEdit.match,
         pendingEdit.p1Wins,
         pendingEdit.p2Wins,
-        pendingEdit.dqPlayerIds,
-        pendingEdit.forcedLoserId,
+        pendingEdit.forfeitPlayerIds,
+        pendingEdit.dqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
         scoreAuth
@@ -719,9 +719,9 @@ export function BracketPage() {
   const handleConfirmBye = async () => {
     if (!pendingBye) return;
     if (!validateRequiredMatchCharacters(pendingBye.match)) return;
-    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null; forcedLossConfirmer?: ScannedCodeInfo | null };
+    let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; forfeitConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null };
     try {
-      scoreAuth = buildScoreAuth(pendingBye.match, pendingBye.dqPlayerIds, pendingBye.forcedLoserId);
+      scoreAuth = buildScoreAuth(pendingBye.match, pendingBye.forfeitPlayerIds, pendingBye.dqLoserId);
     } catch (err) {
       alert(err instanceof Error ? err.message : "認証に失敗しました");
       return;
@@ -735,8 +735,8 @@ export function BracketPage() {
         pendingBye.match,
         pendingBye.p1Wins,
         pendingBye.p2Wins,
-        pendingBye.dqPlayerIds,
-        pendingBye.forcedLoserId,
+        pendingBye.forfeitPlayerIds,
+        pendingBye.dqLoserId,
         p1CharName.trim() || null,
         p2CharName.trim() || null,
         scoreAuth
@@ -822,7 +822,7 @@ export function BracketPage() {
               player1_wins: 0,
               player2_wins: 0,
               winner_id: null,
-              dq_player_id: null,
+              forfeit_player_id: null,
             }
           : prev
       );
@@ -830,9 +830,9 @@ export function BracketPage() {
       setP2Wins(0);
       setP1CharName("");
       setP2CharName("");
-      setP1Dq(false);
-      setP2Dq(false);
-      setForcedLoserId(null);
+      setP1Forfeit(false);
+      setP2Forfeit(false);
+      setDqLoserId(null);
       setConfirmAuthCode("");
       setAuthenticatedPlayerIds([]);
       setAuthenticatedAdminIds([]);
@@ -842,18 +842,18 @@ export function BracketPage() {
     }
   };
 
-  const applyForcedLoss = (loserSlot: 1 | 2) => {
+  const applyDq = (loserSlot: 1 | 2) => {
     if (!selectedMatch) return;
 
     const loserId = loserSlot === 1 ? selectedMatch.player1_id : selectedMatch.player2_id;
     if (!loserId || loserId.startsWith("dummy-")) {
-      alert("プレイヤーがいないスロットには強制敗北を適用できません");
+      alert("プレイヤーがいないスロットにはDQを適用できません");
       return;
     }
 
-    // 既に同じプレイヤーが強制敗北設定済みの場合はキャンセル（トグル）
-    if (forcedLoserId === loserId) {
-      setForcedLoserId(null);
+    // 既に同じプレイヤーがDQ設定済みの場合はキャンセル（トグル）
+    if (dqLoserId === loserId) {
+      setDqLoserId(null);
       return;
     }
 
@@ -861,14 +861,14 @@ export function BracketPage() {
     const loserName = loserId ? getParticipantDisplayName(loserId) : "不明";
     const winnerName = winnerId ? getParticipantDisplayName(winnerId) : "不明";
     const ok = confirm(
-      `「${loserName}」を強制敗北にしますか？\n\n勝者: ${winnerName}\n敗者: ${loserName}\n\nスコアが同点の場合のみ強制敗北を適用します。\nスコア入力済みの場合は入力スコアを優先します。`
+      `「${loserName}」をDQにしますか？\n\n勝者: ${winnerName}\n敗者: ${loserName}\n\nスコアが同点の場合のみDQを適用します。\nスコア入力済みの場合は入力スコアを優先します。`
     );
     if (!ok) return;
 
-    // 強制敗北は通常結果入力/DQとは排他的に扱う
-    setP1Dq(false);
-    setP2Dq(false);
-    setForcedLoserId(loserId ?? null);
+    // DQは通常結果入力/棄権とは排他的に扱う
+    setP1Forfeit(false);
+    setP2Forfeit(false);
+    setDqLoserId(loserId ?? null);
   };
 
   const closeModal = () => {
@@ -877,7 +877,7 @@ export function BracketPage() {
     setPendingEdit(null);
     setConfirmingBye(false);
     setPendingBye(null);
-    setForcedLoserId(null);
+    setDqLoserId(null);
     setConfirmAuthCode("");
     setAuthenticatedPlayerIds([]);
     setAuthenticatedAdminIds([]);
@@ -1565,17 +1565,17 @@ export function BracketPage() {
                           編集
                         </button>
                         <button
-                          onClick={() => applyForcedLoss(1)}
+                          onClick={() => applyDq(1)}
                           disabled={!selectedMatch.player1_id || selectedMatch.player1_id.startsWith("dummy-")}
-                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${forcedLoserId === selectedMatch.player1_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
-                        >強制敗北</button>
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${dqLoserId === selectedMatch.player1_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
+                        >DQ</button>
                         <button
                           onClick={() => {
-                            setForcedLoserId(null);
-                            setP1Dq((v) => !v);
+                            setDqLoserId(null);
+                            setP1Forfeit((v) => !v);
                           }}
-                          className={`text-xs px-2 py-1 rounded ${p1Dq ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                        >DQ</button>
+                          className={`text-xs px-2 py-1 rounded ${p1Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                        >棄権</button>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1618,17 +1618,17 @@ export function BracketPage() {
                           編集
                         </button>
                         <button
-                          onClick={() => applyForcedLoss(2)}
+                          onClick={() => applyDq(2)}
                           disabled={!selectedMatch.player2_id || selectedMatch.player2_id.startsWith("dummy-")}
-                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${forcedLoserId === selectedMatch.player2_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
-                        >強制敗北</button>
+                          className={`text-xs px-2 py-1 rounded disabled:opacity-40 ${dqLoserId === selectedMatch.player2_id ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700 hover:bg-orange-200"}`}
+                        >DQ</button>
                         <button
                           onClick={() => {
-                            setForcedLoserId(null);
-                            setP2Dq((v) => !v);
+                            setDqLoserId(null);
+                            setP2Forfeit((v) => !v);
                           }}
-                          className={`text-xs px-2 py-1 rounded ${p2Dq ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                        >DQ</button>
+                          className={`text-xs px-2 py-1 rounded ${p2Forfeit ? "bg-red-500 text-white" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                        >棄権</button>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1655,18 +1655,18 @@ export function BracketPage() {
                     <p className="text-xs font-semibold text-gray-700">確認コード</p>
                     <div>
                       <label className="text-xs text-gray-600 block mb-1">
-                        {forcedLoserId
-                                          ? tournament.forced_loss_auth_mode === "admin"
-                                            ? "確認コード (強制敗北あり: 管理者)"
-                                            : tournament.forced_loss_auth_mode === "auth"
-                                            ? "確認コード (強制敗北あり: 認証)"
-                                            : "確認コード (強制敗北あり: 当該プレイヤー)"
-                          : p1Dq || p2Dq
+                        {dqLoserId
                                           ? tournament.dq_auth_mode === "admin"
-                                            ? "確認コード (DQ: 管理者)"
+                                            ? "確認コード (DQあり: 管理者)"
                                             : tournament.dq_auth_mode === "auth"
-                                            ? "確認コード (DQ: 認証)"
-                                            : "確認コード (DQ: 当該プレイヤー)"
+                                            ? "確認コード (DQあり: 認証)"
+                                            : "確認コード (DQあり: 当該プレイヤー)"
+                          : p1Forfeit || p2Forfeit
+                                          ? tournament.forfeit_auth_mode === "admin"
+                                            ? "確認コード (棄権: 管理者)"
+                                            : tournament.forfeit_auth_mode === "auth"
+                                            ? "確認コード (棄権: 認証)"
+                                            : "確認コード (棄権: 当該プレイヤー)"
                             : tournament.result_auth_mode === "none"
                           ? "確認コード (通常結果入力: 認証不要)"
                           : tournament.result_auth_mode === "admin"
@@ -1705,7 +1705,7 @@ export function BracketPage() {
                       </div>
                     </div>
                     <p className="text-[11px] text-gray-500">
-                      コード入力後に「認証」を押すと認証状態が有効になります。結果入力・DQ・強制敗北は排他的に扱われ、同時には実行されません。BYEのみの確定では認証は不要です。
+                      コード入力後に「認証」を押すと認証状態が有効になります。結果入力・棄権・DQは排他的に扱われ、同時には実行されません。BYEのみの確定では認証は不要です。
                     </p>
                   </div>
                 )}
@@ -1903,3 +1903,8 @@ export function BracketPage() {
     </div>
   );
 }
+
+
+
+
+

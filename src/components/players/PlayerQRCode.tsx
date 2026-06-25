@@ -35,3 +35,6 @@ export function PlayerQRCode({ player }: Props) {
     </div>
   );
 }
+
+
+

@@ -46,7 +46,7 @@ function makeMatch(
     player1_side: "1P",
     player2_side: "2P",
     status: "pending",
-    dq_player_id: null,
+    forfeit_player_id: null,
     next_match_id: null,
     next_match_slot: null,
     loser_next_match_id: null,
@@ -354,3 +354,6 @@ export function createGrandFinalResetMatch(
   reset.player2_id = winnersWinnerId;
   return reset;
 }
+
+
+

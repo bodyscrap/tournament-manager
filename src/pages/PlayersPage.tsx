@@ -141,7 +141,7 @@ export function PlayersPage() {
                   <span className="font-semibold text-gray-800">{player.name}</span>
                   {player.dq && (
                     <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
-                      DQ
+                      棄権
                     </span>
                   )}
                   {player.character_name && (
@@ -179,7 +179,7 @@ export function PlayersPage() {
                       : "bg-orange-100 hover:bg-orange-200 text-orange-700"
                   }`}
                 >
-                  {player.dq ? "DQ解除" : "DQ"}
+                  {player.dq ? "棄権解除" : "棄権"}
                 </button>
                 <button
                   onClick={() => {
@@ -204,3 +204,6 @@ export function PlayersPage() {
     </div>
   );
 }
+
+
+
