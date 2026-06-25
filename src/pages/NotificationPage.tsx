@@ -315,9 +315,10 @@ function MessageDetailView({
     }
   };
 
-  const handleVerifyRemoteDqCode = () => {
+  const verifyRemoteDqCode = (rawCode: string) => {
+    const normalizedCode = extractUserCode(rawCode);
     setDqError("");
-    if (!normalizedInputDqCode) {
+    if (!normalizedCode) {
       setDqError("ユーザーコードを入力してください");
       setDqVerifiedCode(null);
       return;
@@ -327,12 +328,16 @@ function MessageDetailView({
       setDqVerifiedCode(null);
       return;
     }
-    if (normalizedInputDqCode !== normalizedExpectedDqCode) {
+    if (normalizedCode !== normalizedExpectedDqCode) {
       setDqError("呼び出しメッセージのユーザーコードと一致しません");
       setDqVerifiedCode(null);
       return;
     }
-    setDqVerifiedCode(normalizedInputDqCode);
+    setDqVerifiedCode(normalizedCode);
+  };
+
+  const handleVerifyRemoteDqCode = () => {
+    verifyRemoteDqCode(dqCodeInput);
   };
 
   const handleResolveSubmit = async () => {
@@ -527,7 +532,7 @@ function MessageDetailView({
               <p className={`text-xs ${canSubmitRemoteDq ? "text-emerald-700" : "text-rose-700"}`}>
                 {canSubmitRemoteDq
                   ? "認証OK: 呼び出しメッセージのユーザーコードと一致しました"
-                  : "未認証: 先にコード入力後「認証」を押してください"}
+                  : "未認証: コード入力またはカメラ読取で認証してください"}
               </p>
               {dqError && <p className="text-xs text-rose-700">{dqError}</p>}
             </div>
@@ -542,8 +547,8 @@ function MessageDetailView({
         onDetected={(value) => {
           const extracted = extractUserCode(value);
           setDqCodeInput(extracted);
+          verifyRemoteDqCode(extracted);
           setShowDqQrScan(false);
-          setDqError("");
         }}
       />
 

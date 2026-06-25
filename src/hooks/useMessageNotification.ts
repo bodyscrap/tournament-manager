@@ -18,7 +18,6 @@ import type {
 import { useAppContext } from "../context/AppContext";
 import {
   getTournamentMessages,
-  getTournamentsByEventCode,
   getUnmatchedMessages,
   insertUnmatchedMessage,
   insertTournamentMessage,
@@ -106,11 +105,25 @@ function toMatchSlot(slot: number | null | undefined): 1 | 2 | undefined {
   return undefined;
 }
 
+function normalizeIdentifier(value: string | null | undefined): string {
+  return (value ?? "").normalize("NFKC").trim().toUpperCase();
+}
+
+function isSameIdentifier(a: string | null | undefined, b: string | null | undefined): boolean {
+  const normalizedA = normalizeIdentifier(a);
+  const normalizedB = normalizeIdentifier(b);
+  return normalizedA.length > 0 && normalizedA === normalizedB;
+}
+
 function normalizeTargetTournamentIds(targets: string[] | undefined): string[] {
   if (!targets || targets.length === 0) return [];
-  return targets
-    .map((target) => target.trim())
-    .filter((target) => target.length > 0);
+  return Array.from(
+    new Set(
+      targets
+        .map((target) => normalizeIdentifier(target))
+        .filter((target) => target.length > 0)
+    )
+  );
 }
 
 function matchesTournamentDestination(
@@ -118,7 +131,9 @@ function matchesTournamentDestination(
   targets: string[]
 ): boolean {
   if (targets.length === 0) return true;
-  return targets.includes(tournamentRef.tournament_code) || targets.includes(tournamentRef.id);
+  const normalizedCode = normalizeIdentifier(tournamentRef.tournament_code);
+  const normalizedId = normalizeIdentifier(tournamentRef.id);
+  return targets.includes(normalizedCode) || targets.includes(normalizedId);
 }
 
 // ─────────────────────────────────────────
@@ -693,11 +708,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         seenMessageIds.current.add(messageId);
 
         void (async () => {
-          const sameEventTournaments = await getTournamentsByEventCode(message.eventId);
+          const sameEventTournaments = tournamentList.filter((t) =>
+            isSameIdentifier(t.event_code, message.eventId)
+          );
           const targets = normalizeTargetTournamentIds(message.targetTournamentIds);
-          const acceptedTournaments = sameEventTournaments.filter((t) => {
+          const acceptedTournaments = [...sameEventTournaments].filter((t) => {
             return matchesTournamentDestination(t, targets);
           });
+
+          if (
+            tournament &&
+            isSameIdentifier(tournament.event_code, message.eventId) &&
+            !acceptedTournaments.some((accepted) => accepted.id === tournament.id) &&
+            matchesTournamentDestination(tournament, targets)
+          ) {
+            acceptedTournaments.push(tournament);
+          }
 
           message.receivedAt = nowIso();
           message.sentAt = message.sentAt ?? message.timestamp;
