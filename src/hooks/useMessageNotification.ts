@@ -606,6 +606,10 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         // ② 重複排除
         if (seenMessageIds.current.has(messageId)) return;
 
+        // StrictMode や短時間の重複受信で同一IDが並行処理されるのを防ぐため、
+        // 非同期処理開始前にロックする。
+        seenMessageIds.current.add(messageId);
+
         void (async () => {
           const sameEventTournaments = await getTournamentsByEventCode(message.eventId);
           const targets = message.targetTournamentIds ?? [];
@@ -622,7 +626,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             if (tournament) {
               dispatch({ type: "ADD_UNMATCHED_MESSAGE", message });
             }
-            seenMessageIds.current.add(messageId);
             return;
           }
 
@@ -644,17 +647,10 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             }
             void maybeSendTournamentIdCheckResult(message);
           }
-
-          seenMessageIds.current.add(messageId);
         })().catch((error) => {
+          seenMessageIds.current.delete(messageId);
           console.error("[Message] Failed to distribute incoming message", error);
         });
-
-        // NOTE: async block handles dispatch/persist and seen state.
-        return;
-
-        // ③ 旧フロー（未使用）
-        seenMessageIds.current.add(messageId);
       });
     })();
 

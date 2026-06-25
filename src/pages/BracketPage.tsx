@@ -81,6 +81,7 @@ export function BracketPage() {
   const [draggingFrom, setDraggingFrom] = useState<DragState | null>(null);
   const dragSourceRef = useRef<DragState | null>(null);
   const previousUnreadRef = useRef(0);
+  const handledRemoteDqQueryRef = useRef<string | null>(null);
 
   const playerMap = new Map<string, TournamentPlayer>(participants.map((p) => [p.player_id, p]));
   const adminMap = new Map(admins.map((a) => [a.admin_id, a]));
@@ -260,7 +261,10 @@ export function BracketPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("fromRemoteDq") !== "1") return;
+    if (params.get("fromRemoteDq") !== "1") {
+      handledRemoteDqQueryRef.current = null;
+      return;
+    }
 
     const clearRemoteDqParams = () => {
       navigate("/tournament/bracket", { replace: true });
@@ -269,6 +273,13 @@ export function BracketPage() {
     const matchCardId = params.get("matchCardId")?.trim() ?? "";
     const dqPlayerId = params.get("dqPlayerId")?.trim() ?? "";
     const dqUserCode = params.get("dqUserCode")?.trim() ?? "";
+    const remoteDqQueryKey = `${matchCardId}|${dqPlayerId}|${dqUserCode}`;
+
+    if (handledRemoteDqQueryRef.current === remoteDqQueryKey) {
+      return;
+    }
+    handledRemoteDqQueryRef.current = remoteDqQueryKey;
+
     if (!matchCardId || !dqPlayerId || !dqUserCode) {
       clearRemoteDqParams();
       return;
@@ -280,7 +291,8 @@ export function BracketPage() {
       return;
     }
 
-    const uiState = getUiMatchState(targetMatch, incomingBySlot);
+    const currentIncomingBySlot = buildIncomingBySlot(tournamentMatches);
+    const uiState = getUiMatchState(targetMatch, currentIncomingBySlot);
     const canPrefillRemoteDq = uiState === "ready" || uiState === "in_progress";
     const isTargetPlayerOnCard =
       targetMatch.player1_id === dqPlayerId || targetMatch.player2_id === dqPlayerId;
@@ -296,7 +308,7 @@ export function BracketPage() {
     setP2Dq(targetMatch.player2_id === dqPlayerId);
     setConfirmAuthCode(dqUserCode);
     clearRemoteDqParams();
-  }, [location.search, tournamentMatches, navigate, incomingBySlot]);
+  }, [location.search, tournamentMatches, navigate]);
 
   const computeNewWinner = (
     m: Match,
