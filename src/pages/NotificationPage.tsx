@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
+import { QrScannerDialog } from "../components/common/QrScannerDialog";
 import type { ReceivedMessageEntry, SentMessageEntry, UnmatchedMessageEntry } from "../hooks/useMessageNotification";
 import type { MessageAttribute, NotificationMessage } from "../lib/types/notification";
 import { extractUserCode } from "../lib/playerCode";
@@ -204,6 +205,7 @@ function MessageDetailView({
   canApproveRemoteDq,
   requestingRemoteDq,
   approvingRemoteDq,
+  remoteDqExpectedUserCode,
   onRequestRemoteDq,
   onApproveRemoteDq,
 }: {
@@ -217,6 +219,7 @@ function MessageDetailView({
   canApproveRemoteDq: boolean;
   requestingRemoteDq: boolean;
   approvingRemoteDq: boolean;
+  remoteDqExpectedUserCode?: string;
   onRequestRemoteDq: (message: NotificationMessage, enteredUserCode: string) => Promise<void>;
   onApproveRemoteDq: (requestMessage: NotificationMessage) => Promise<void>;
 }) {
@@ -224,6 +227,8 @@ function MessageDetailView({
   const [replySending, setReplySending] = useState(false);
   const [dqCodeInput, setDqCodeInput] = useState("");
   const [dqError, setDqError] = useState("");
+  const [dqVerifiedCode, setDqVerifiedCode] = useState<string | null>(null);
+  const [showDqQrScan, setShowDqQrScan] = useState(false);
 
   if (!entry) {
     return (
@@ -241,6 +246,27 @@ function MessageDetailView({
     message.attribute === "REMOTE_DQ_REQUEST" ||
     message.attribute === "REMOTE_DQ_APPROVED";
   const canReply = isGeneralMessage && !isThreadResolved;
+  const normalizedExpectedDqCode = extractUserCode(remoteDqExpectedUserCode ?? "");
+  const normalizedInputDqCode = extractUserCode(dqCodeInput);
+  const canSubmitRemoteDq = !!(
+    canRequestRemoteDq &&
+    dqVerifiedCode &&
+    normalizedExpectedDqCode &&
+    dqVerifiedCode === normalizedExpectedDqCode
+  );
+
+  useEffect(() => {
+    setDqCodeInput("");
+    setDqError("");
+    setDqVerifiedCode(null);
+    setShowDqQrScan(false);
+  }, [message.messageId]);
+
+  useEffect(() => {
+    if (!normalizedExpectedDqCode || !normalizedInputDqCode || normalizedInputDqCode !== dqVerifiedCode) {
+      setDqVerifiedCode(null);
+    }
+  }, [normalizedExpectedDqCode, normalizedInputDqCode, dqVerifiedCode]);
 
   const handleReply = async (comment: string) => {
     setReplySending(true);
@@ -254,17 +280,37 @@ function MessageDetailView({
 
   const handleRequestRemoteDq = async () => {
     setDqError("");
-    const raw = dqCodeInput.trim();
-    if (!raw) {
-      setDqError("ユーザーコードを入力してください");
+    if (!canSubmitRemoteDq) {
+      setDqError("先にユーザーコードを認証してください");
       return;
     }
     try {
-      await onRequestRemoteDq(message, raw);
+      await onRequestRemoteDq(message, dqVerifiedCode);
       setDqCodeInput("");
+      setDqVerifiedCode(null);
     } catch (e) {
       setDqError(String(e));
     }
+  };
+
+  const handleVerifyRemoteDqCode = () => {
+    setDqError("");
+    if (!normalizedInputDqCode) {
+      setDqError("ユーザーコードを入力してください");
+      setDqVerifiedCode(null);
+      return;
+    }
+    if (!normalizedExpectedDqCode) {
+      setDqError("呼び出しメッセージの対象コードが取得できません");
+      setDqVerifiedCode(null);
+      return;
+    }
+    if (normalizedInputDqCode !== normalizedExpectedDqCode) {
+      setDqError("呼び出しメッセージのユーザーコードと一致しません");
+      setDqVerifiedCode(null);
+      return;
+    }
+    setDqVerifiedCode(normalizedInputDqCode);
   };
 
   return (
@@ -368,7 +414,7 @@ function MessageDetailView({
             <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">リモートDQ申請</h3>
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 space-y-2">
               <p className="text-xs text-rose-800">
-                呼び出し対象のユーザーコードを入力してDQ申請を送信します。
+                呼び出し対象のユーザーコードを認証すると、DQ申請を送信できます。
               </p>
               <div className="flex gap-2">
                 <input
@@ -381,20 +427,51 @@ function MessageDetailView({
                   disabled={requestingRemoteDq}
                 />
                 <button
+                  onClick={handleVerifyRemoteDqCode}
+                  className="px-3 py-1 text-xs rounded bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                  disabled={requestingRemoteDq}
+                >
+                  認証
+                </button>
+                <button
+                  onClick={() => setShowDqQrScan(true)}
+                  className="px-3 py-1 text-xs rounded bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                  disabled={requestingRemoteDq}
+                >
+                  カメラ
+                </button>
+                <button
                   onClick={() => {
                     void handleRequestRemoteDq();
                   }}
                   className="px-3 py-1 text-xs rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60"
-                  disabled={requestingRemoteDq}
+                  disabled={requestingRemoteDq || !canSubmitRemoteDq}
                 >
                   {requestingRemoteDq ? "送信中..." : "DQ申請"}
                 </button>
               </div>
+              <p className={`text-xs ${canSubmitRemoteDq ? "text-emerald-700" : "text-rose-700"}`}>
+                {canSubmitRemoteDq
+                  ? "認証OK: 呼び出しメッセージのユーザーコードと一致しました"
+                  : "未認証: 先にコード入力後「認証」を押してください"}
+              </p>
               {dqError && <p className="text-xs text-rose-700">{dqError}</p>}
             </div>
           </div>
         )}
       </div>
+
+      <QrScannerDialog
+        open={showDqQrScan}
+        title="リモートDQ申請コードを読み取り"
+        onClose={() => setShowDqQrScan(false)}
+        onDetected={(value) => {
+          const extracted = extractUserCode(value);
+          setDqCodeInput(extracted);
+          setShowDqQrScan(false);
+          setDqError("");
+        }}
+      />
 
       {/* 返信フォーム */}
       {showReplyForm && canReply && (
@@ -799,6 +876,7 @@ export function NotificationPage() {
     selectedRootMessage.matchSlot &&
     !isSelectedThreadResolved
   );
+  const remoteDqExpectedUserCode = selectedRootMessage?.targetUserCode;
   const canApproveRemoteDq = !!(
     selectedMessage &&
     selectedMessage.message.attribute === "REMOTE_DQ_REQUEST" &&
@@ -1076,6 +1154,7 @@ export function NotificationPage() {
             canApproveRemoteDq={canApproveRemoteDq}
             requestingRemoteDq={requestingRemoteDq}
             approvingRemoteDq={approvingRemoteDq}
+            remoteDqExpectedUserCode={remoteDqExpectedUserCode}
             onRequestRemoteDq={handleRequestRemoteDq}
             onApproveRemoteDq={handleApproveRemoteDq}
           />

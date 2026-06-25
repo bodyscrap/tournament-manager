@@ -182,6 +182,44 @@ export function BracketPage() {
     return findByCode(raw);
   };
 
+  const authenticateCodeForMatch = (
+    match: Match,
+    rawCode: string,
+    options?: { silent?: boolean }
+  ): { ok: boolean; message?: string } => {
+    const confirmer = resolveConfirmerByInput(rawCode);
+    if (!confirmer) {
+      const message = "有効なコードではありません";
+      if (!options?.silent) alert(message);
+      return { ok: false, message };
+    }
+
+    if (confirmer.type === "participant") {
+      if (confirmer.id !== match.player1_id && confirmer.id !== match.player2_id) {
+        const message = "この試合の参加者コードを入力してください";
+        if (!options?.silent) alert(message);
+        return { ok: false, message };
+      }
+      setAuthenticatedPlayerIds((prev) => (prev.includes(confirmer.id) ? prev : [...prev, confirmer.id]));
+      if (!options?.silent) {
+        alert(`${getParticipantDisplayName(confirmer.id)} を認証しました`);
+      }
+      return { ok: true };
+    }
+
+    if (!adminMap.has(confirmer.id)) {
+      const message = "管理者コードが無効です";
+      if (!options?.silent) alert(message);
+      return { ok: false, message };
+    }
+    setAuthenticatedAdminIds([confirmer.id]);
+    setLastAuthenticatedAdminId(confirmer.id);
+    if (!options?.silent) {
+      alert(`${getAdminDisplayName(confirmer.id)} を認証しました`);
+    }
+    return { ok: true };
+  };
+
   const extractCodeFromQrPayload = (raw: string): string => {
     return extractUserCode(raw);
   };
@@ -307,6 +345,10 @@ export function BracketPage() {
     setP1Dq(targetMatch.player1_id === dqPlayerId);
     setP2Dq(targetMatch.player2_id === dqPlayerId);
     setConfirmAuthCode(dqUserCode);
+    const autoAuth = authenticateCodeForMatch(targetMatch, dqUserCode, { silent: true });
+    if (!autoAuth.ok) {
+      alert(autoAuth.message ?? "リモートDQ用コードの自動認証に失敗しました");
+    }
     clearRemoteDqParams();
   }, [location.search, tournamentMatches, navigate]);
 
@@ -538,29 +580,7 @@ export function BracketPage() {
 
   const handleAuthenticateCode = (rawCode: string): void => {
     if (!selectedMatch) return;
-    const confirmer = resolveConfirmerByInput(rawCode);
-    if (!confirmer) {
-      alert("有効なコードではありません");
-      return;
-    }
-
-    if (confirmer.type === "participant") {
-      if (confirmer.id !== selectedMatch.player1_id && confirmer.id !== selectedMatch.player2_id) {
-        alert("この試合の参加者コードを入力してください");
-        return;
-      }
-      setAuthenticatedPlayerIds((prev) => (prev.includes(confirmer.id) ? prev : [...prev, confirmer.id]));
-      alert(`${getParticipantDisplayName(confirmer.id)} を認証しました`);
-      return;
-    }
-
-    if (!adminMap.has(confirmer.id)) {
-      alert("管理者コードが無効です");
-      return;
-    }
-    setAuthenticatedAdminIds([confirmer.id]);
-    setLastAuthenticatedAdminId(confirmer.id);
-    alert(`${getAdminDisplayName(confirmer.id)} を認証しました`);
+    authenticateCodeForMatch(selectedMatch, rawCode);
   };
 
   const handleAuthenticateClick = () => {
