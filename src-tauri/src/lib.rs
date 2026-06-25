@@ -177,20 +177,29 @@ async fn send_udp_broadcast(
 
     let settings = *state.settings.read().await;
     let broadcast_addr = resolve_broadcast_addr(settings.subnet_mask);
-    let target = format!("{}:{}", broadcast_addr, settings.port);
+    let primary_target = format!("{}:{}", broadcast_addr, settings.port);
+    let fallback_target = format!("{}:{}", FALLBACK_BROADCAST_ADDR, settings.port);
+
+    let targets = if primary_target == fallback_target {
+        vec![primary_target]
+    } else {
+        vec![primary_target, fallback_target]
+    };
 
     for i in 0u8..3 {
-        socket
-            .send_to(payload.as_bytes(), &target)
-            .await
-            .map_err(|e| format!("Failed to send UDP packet (attempt {}): {}", i + 1, e))?;
+        for target in &targets {
+            socket
+                .send_to(payload.as_bytes(), target)
+                .await
+                .map_err(|e| format!("Failed to send UDP packet to {} (attempt {}): {}", target, i + 1, e))?;
+        }
 
         if i < 2 {
             sleep(Duration::from_millis(RETRY_INTERVAL_MS)).await;
         }
     }
 
-    println!("[UDP] Broadcast sent ({} bytes, 3x)", payload.len());
+    println!("[UDP] Broadcast sent ({} bytes, 3x, targets: {:?})", payload.len(), targets);
     Ok(())
 }
 
