@@ -917,8 +917,11 @@ export function NotificationPage() {
     selectedRootMessage.sourceTournamentId === tournament.tournament_code
   );
   const canRequestRemoteDq = !!(
+    tab === "received" &&
     selectedRootMessage &&
     selectedRootMessage.attribute === "CALL" &&
+    tournament &&
+    selectedRootMessage.sourceTournamentId !== tournament.tournament_code &&
     selectedRootMessage.targetUserCode &&
     selectedRootMessage.matchCardId &&
     selectedRootMessage.matchSlot &&
@@ -1194,13 +1197,14 @@ export function NotificationPage() {
           ) : (
             <div className="flex-1 overflow-y-auto">
               {threadGroups.map((group) => {
-                const representative = group.rootEntry ?? group.latestEntry;
+                const representative = group.latestEntry;
                 const representativeId = representative.message.messageId;
                 const isExpanded = expandedThreadIds.has(group.threadId);
                 const isThreadSelected = group.entries.some(
                   (entry) => entry.message.messageId === selectedMessage?.message.messageId
                 );
                 const isThreadResolved = resolvedThreadMap.has(group.threadId);
+                const rootTitle = group.rootEntry?.message.title ?? representative.message.title;
 
                 return (
                   <div key={group.threadId} className="border-b border-gray-200">
@@ -1221,8 +1225,8 @@ export function NotificationPage() {
                           {isThreadResolved && (
                             <span className="text-[11px] text-emerald-700 font-medium">✓ 解決</span>
                           )}
-                          <p className="text-[11px] text-gray-500 truncate">
-                            スレッド: {group.threadId}
+                          <p className="text-[11px] text-gray-500 truncate" title={rootTitle}>
+                            スレッド: {rootTitle}
                           </p>
                         </div>
                       </button>
