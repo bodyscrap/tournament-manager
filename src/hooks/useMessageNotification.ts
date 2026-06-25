@@ -106,6 +106,21 @@ function toMatchSlot(slot: number | null | undefined): 1 | 2 | undefined {
   return undefined;
 }
 
+function normalizeTargetTournamentIds(targets: string[] | undefined): string[] {
+  if (!targets || targets.length === 0) return [];
+  return targets
+    .map((target) => target.trim())
+    .filter((target) => target.length > 0);
+}
+
+function matchesTournamentDestination(
+  tournamentRef: { id: string; tournament_code: string },
+  targets: string[]
+): boolean {
+  if (targets.length === 0) return true;
+  return targets.includes(tournamentRef.tournament_code) || targets.includes(tournamentRef.id);
+}
+
 // ─────────────────────────────────────────
 // State types (exported for use in UI)
 // ─────────────────────────────────────────
@@ -450,10 +465,10 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
   const shouldAcceptByDestination = useCallback(
     (message: NotificationMessage): boolean => {
-      const targets = message.targetTournamentIds ?? [];
+      const targets = normalizeTargetTournamentIds(message.targetTournamentIds);
       if (targets.length === 0) return true;
       if (!tournament) return false;
-      return targets.includes(tournament.tournament_code);
+      return matchesTournamentDestination(tournament, targets);
     },
     [tournament]
   );
@@ -679,10 +694,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
         void (async () => {
           const sameEventTournaments = await getTournamentsByEventCode(message.eventId);
-          const targets = message.targetTournamentIds ?? [];
+          const targets = normalizeTargetTournamentIds(message.targetTournamentIds);
           const acceptedTournaments = sameEventTournaments.filter((t) => {
-            if (targets.length === 0) return true;
-            return targets.includes(t.tournament_code);
+            return matchesTournamentDestination(t, targets);
           });
 
           message.receivedAt = nowIso();

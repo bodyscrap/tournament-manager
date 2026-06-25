@@ -228,7 +228,7 @@ function MessageDetailView({
   onReply: (parentMessage: NotificationMessage, replyBody: string) => Promise<void>;
   isThreadResolved: boolean;
   canResolveThread: boolean;
-  onResolveThread: (message: NotificationMessage) => Promise<void>;
+  onResolveThread: (message: NotificationMessage, resolveComment?: string) => Promise<void>;
   resolvingThread: boolean;
   canRequestRemoteDq: boolean;
   canApproveRemoteDq: boolean;
@@ -244,6 +244,9 @@ function MessageDetailView({
   const [dqError, setDqError] = useState("");
   const [dqVerifiedCode, setDqVerifiedCode] = useState<string | null>(null);
   const [showDqQrScan, setShowDqQrScan] = useState(false);
+  const [showResolveForm, setShowResolveForm] = useState(false);
+  const [resolveComment, setResolveComment] = useState("");
+  const [resolveError, setResolveError] = useState("");
 
   const message = entry?.message ?? null;
   const messageId = message?.messageId ?? "";
@@ -268,6 +271,9 @@ function MessageDetailView({
     setDqError("");
     setDqVerifiedCode(null);
     setShowDqQrScan(false);
+    setShowResolveForm(false);
+    setResolveComment("");
+    setResolveError("");
   }, [messageId]);
 
   useEffect(() => {
@@ -329,6 +335,23 @@ function MessageDetailView({
     setDqVerifiedCode(normalizedInputDqCode);
   };
 
+  const handleResolveSubmit = async () => {
+    const trimmedResolveComment = resolveComment.trim();
+    if (trimmedResolveComment.length > MAX_COMMENT_LEN) {
+      setResolveError("通信欄は 300 文字以下で入力してください");
+      return;
+    }
+
+    setResolveError("");
+    try {
+      await onResolveThread(message, trimmedResolveComment || undefined);
+      setShowResolveForm(false);
+      setResolveComment("");
+    } catch (e) {
+      setResolveError(String(e));
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-white">
       {/* ヘッダー */}
@@ -346,12 +369,13 @@ function MessageDetailView({
           {canResolveThread && !isThreadResolved && (
             <button
               onClick={() => {
-                void onResolveThread(message);
+                setResolveError("");
+                setShowResolveForm((prev) => !prev);
               }}
               className="px-2 py-1 text-xs rounded-lg border border-emerald-300 hover:bg-emerald-50 text-emerald-700 disabled:opacity-60"
               disabled={resolvingThread}
             >
-              {resolvingThread ? "処理中..." : "スレッドを解決"}
+              {showResolveForm ? "解決入力を閉じる" : "スレッドを解決"}
             </button>
           )}
           {canApproveRemoteDq && (
@@ -422,6 +446,40 @@ function MessageDetailView({
             <p className="text-sm text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg p-3">
               {message.comment}
             </p>
+          </div>
+        )}
+
+        {canResolveThread && !isThreadResolved && showResolveForm && (
+          <div>
+            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">解決コメント（任意）</h3>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+              <textarea
+                rows={3}
+                placeholder="例: みつかりました"
+                className="w-full border border-emerald-300 rounded-lg px-3 py-2 text-sm"
+                value={resolveComment}
+                onChange={(e) => {
+                  setResolveComment(e.target.value.slice(0, MAX_COMMENT_LEN));
+                  setResolveError("");
+                }}
+                disabled={resolvingThread}
+              />
+              <div className="flex items-end justify-between gap-2">
+                <p className="text-xs text-gray-500">{resolveComment.length} / {MAX_COMMENT_LEN}</p>
+                {resolveError && <p className="text-xs text-red-600">{resolveError}</p>}
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    void handleResolveSubmit();
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                  disabled={resolvingThread}
+                >
+                  {resolvingThread ? "送信中..." : "解決を送信"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -540,12 +598,18 @@ function NewMessageDialog({
   }) => Promise<void>;
   onClose: () => void;
 }) {
+  const isCallComposePreset =
+    initialKind === "CALL" &&
+    !!initialSelectedPlayerId &&
+    !!initialMatchCardId &&
+    !!initialMatchSlot;
+
   const initialPlayerId =
     initialSelectedPlayerId && playerOptions.some((p) => p.playerId === initialSelectedPlayerId)
       ? initialSelectedPlayerId
       : playerOptions[0]?.playerId ?? "";
 
-  const [kind, setKind] = useState<ComposeKind>(initialKind ?? "CALL");
+  const [kind, setKind] = useState<ComposeKind>(isCallComposePreset ? "CALL" : "GENERAL");
   const [selectedPlayerId, setSelectedPlayerId] = useState(initialPlayerId);
   const [targetTournamentIdsInput, setTargetTournamentIdsInput] = useState("");
   const [comment, setComment] = useState(initialComment ?? "");
@@ -588,6 +652,10 @@ function NewMessageDialog({
       setSending(true);
 
       if (kind === "CALL") {
+        if (!isCallComposePreset) {
+          setError("呼出はブラケットの対戦カード詳細からのみ送信できます");
+          return;
+        }
         if (tournamentStatus !== "in_progress") {
           setError("呼出メッセージは進行中の大会でのみ送信できます");
           return;
@@ -689,10 +757,15 @@ function NewMessageDialog({
               value={kind}
               onChange={(e) => setKind(e.target.value as ComposeKind)}
             >
-              <option value="CALL">呼出</option>
+              {isCallComposePreset && <option value="CALL">呼出</option>}
               <option value="TOURNAMENT_ID_CHECK">大会ID確認</option>
               <option value="GENERAL">汎用</option>
             </select>
+            {!isCallComposePreset && (
+              <p className="text-xs text-gray-500 mt-1">
+                呼出はブラケットの対戦カード詳細から作成してください。
+              </p>
+            )}
           </div>
 
           <div>
@@ -1059,12 +1132,21 @@ export function NotificationPage() {
     const params = new URLSearchParams(location.search);
     if (params.get("compose") !== "call") return;
 
+    const selectedPlayerId = params.get("playerId") ?? undefined;
+    const matchCardId = params.get("matchCardId") ?? undefined;
+    const matchSlot = params.get("matchSlot") === "1" ? 1 : params.get("matchSlot") === "2" ? 2 : undefined;
+
+    if (!selectedPlayerId || !matchCardId || !matchSlot) {
+      navigate("/notification", { replace: true });
+      return;
+    }
+
     setComposePreset({
       kind: "CALL",
-      selectedPlayerId: params.get("playerId") ?? undefined,
+      selectedPlayerId,
       comment: params.get("comment") ?? undefined,
-      matchCardId: params.get("matchCardId") ?? undefined,
-      matchSlot: params.get("matchSlot") === "1" ? 1 : params.get("matchSlot") === "2" ? 2 : undefined,
+      matchCardId,
+      matchSlot,
     });
     setShowCompose(true);
     navigate("/notification", { replace: true });
@@ -1091,7 +1173,7 @@ export function NotificationPage() {
     });
   };
 
-  const handleResolveThread = async (baseMessage: NotificationMessage) => {
+  const handleResolveThread = async (baseMessage: NotificationMessage, resolveComment?: string) => {
     if (!tournament) throw new Error("大会が選択されていません");
 
     const threadId = baseMessage.threadId ?? baseMessage.messageId;
@@ -1112,7 +1194,7 @@ export function NotificationPage() {
         attribute: "THREAD_RESOLVED",
         title: `[解決] ${rootMessage.title}`,
         body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} がスレッドを解決しました。`,
-        comment: undefined,
+        comment: resolveComment,
         targetTournamentIds: undefined,
         threadId,
         parentMessageId: baseMessage.messageId,
@@ -1145,6 +1227,8 @@ export function NotificationPage() {
     if (!rootMessage.matchCardId || !rootMessage.matchSlot || !rootMessage.targetPlayerId) {
       throw new Error("呼び出しカード情報が不足しています");
     }
+    const requestTargets = [rootMessage.sourceTournamentId, rootMessage.sourceTournamentDbId]
+      .filter((value): value is string => !!value && value.trim().length > 0);
 
     setRequestingRemoteDq(true);
     try {
@@ -1156,7 +1240,7 @@ export function NotificationPage() {
           `対象カードID: ${rootMessage.matchCardId}\n` +
           `対象プレイヤーID: ${rootMessage.targetPlayerId}\n` +
           `対象プレイヤー名: ${rootMessage.targetPlayerName ?? "(不明)"}`,
-        targetTournamentIds: [rootMessage.sourceTournamentId],
+        targetTournamentIds: requestTargets,
         threadId,
         parentMessageId: baseMessage.messageId,
         rootMessageId,
@@ -1188,6 +1272,8 @@ export function NotificationPage() {
     }
     const requestFromTournamentId = requestMessage.remoteDqRequestedByTournamentId ?? requestMessage.sourceTournamentId;
     if (!requestFromTournamentId) throw new Error("申請元大会が不明です");
+    const approvalTargets = [requestFromTournamentId, requestMessage.sourceTournamentDbId]
+      .filter((value): value is string => !!value && value.trim().length > 0);
 
     setApprovingRemoteDq(true);
     try {
@@ -1195,7 +1281,7 @@ export function NotificationPage() {
         attribute: "REMOTE_DQ_APPROVED",
         title: `棄権承認: ${rootMessage.title}`,
         body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name} が棄権申請を承認しました。`,
-        targetTournamentIds: [requestFromTournamentId],
+        targetTournamentIds: approvalTargets,
         threadId,
         parentMessageId: requestMessage.messageId,
         rootMessageId,
