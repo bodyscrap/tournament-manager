@@ -560,7 +560,7 @@ async function ensureParticipantCodes(
       normalizedEventCode,
       normalizedTournamentCode,
       nextSequence,
-      participant.name
+      participant.registered_name
     );
     await updateTournamentPlayerCode(
       tournament.id,
@@ -1441,29 +1441,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       const trimmed = name.trim();
       if (!trimmed) return;
-
-      const currentAdmins = await getTournamentAdmins(tournament.id);
-      const current = currentAdmins.find((a) => a.admin_id === admin_id);
-      if (!current) return;
-      const ordered = [...currentAdmins].sort((a, b) => a.admin_sequence - b.admin_sequence);
-      const fallbackSequence = ordered.findIndex((a) => a.admin_id === admin_id) + 1;
-      const sequence = current.admin_sequence > 0 ? current.admin_sequence : Math.max(1, fallbackSequence);
-
-      const generated = buildAdminCode(
-        normalizeEventCode(tournament.event_code),
-        normalizeTournamentCode(tournament.tournament_code),
-        tournament.max_participants,
-        sequence
-      );
-
       await updateTournamentAdminName(tournament.id, admin_id, trimmed);
-      await updateTournamentAdminCode(
-        tournament.id,
-        admin_id,
-        generated.adminCode,
-        sequence,
-        generated.adminId4
-      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -1516,29 +1494,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!tournament) return;
       const trimmed = name.trim();
       if (!trimmed) return;
-
-      const currentParticipants = await getTournamentPlayers(tournament.id);
-      const current = currentParticipants.find((p) => p.player_id === player_id);
-      if (!current) return;
-      const ordered = [...currentParticipants].sort((a, b) => a.seed - b.seed);
-      const fallbackSequence = ordered.findIndex((p) => p.player_id === player_id) + 1;
-      const sequence = current.player_sequence > 0 ? current.player_sequence : Math.max(1, fallbackSequence);
-
-      const generated = buildPlayerCode(
-        normalizeEventCode(tournament.event_code),
-        normalizeTournamentCode(tournament.tournament_code),
-        sequence,
-        trimmed
-      );
-
       await updateTournamentPlayerName(tournament.id, player_id, trimmed);
-      await updateTournamentPlayerCode(
-        tournament.id,
-        player_id,
-        generated.playerCode,
-        sequence,
-        generated.playerId4
-      );
       await fetchTournament();
     },
     [tournament, fetchTournament]
@@ -1706,7 +1662,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             normalizedEventCode,
             normalizedTournamentCode,
             sequence,
-            participant.name
+            participant.registered_name
           );
           await updateTournamentPlayerCode(
             tournament.id,

@@ -134,6 +134,7 @@ export interface TournamentPlayer {
   player_sequence: number;
   player_id_4: string;
   seed: number; // bracket position (1-indexed)
+  registered_name: string; // immutable name used for player code generation
   name: string;
   character_name: string | null;
   selected_characters: Record<string, string[]>; // category_id => selected character names
@@ -148,6 +149,7 @@ export interface TournamentPlayerRow {
   player_sequence: number;
   player_id_4: string;
   seed: number;
+  registered_name?: string;
   name: string;
   character_name: string | null;
   selected_characters_json: string | null; // raw JSON: category_id => string[]
@@ -164,6 +166,7 @@ export interface TournamentAdmin {
   admin_code: string;
   admin_sequence: number;
   admin_id_4: string;
+  registered_name: string;
   name: string;
   attributes: Record<string, string>;
   created_at: string;
@@ -175,6 +178,7 @@ export interface TournamentAdminRow {
   admin_code: string;
   admin_sequence: number;
   admin_id_4: string;
+  registered_name?: string;
   name: string;
   attributes: string;
   created_at: string;

@@ -48,6 +48,7 @@ async function ensureTournamentAdminsTable(db: Database): Promise<void> {
       admin_code      TEXT NOT NULL DEFAULT '',
       admin_sequence  INTEGER NOT NULL DEFAULT 0,
       admin_id_4      TEXT NOT NULL DEFAULT '0000',
+      registered_name TEXT NOT NULL DEFAULT '',
       name            TEXT NOT NULL,
       attributes      TEXT NOT NULL DEFAULT '{}',
       created_at      TEXT NOT NULL,
@@ -372,6 +373,7 @@ async function initSchema(db: Database): Promise<void> {
       player_sequence INTEGER NOT NULL DEFAULT 0,
       player_id_4   TEXT NOT NULL DEFAULT '0000',
       seed          INTEGER NOT NULL,
+      registered_name TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (tournament_id, player_id)
     );
   `);
@@ -519,6 +521,20 @@ async function initSchema(db: Database): Promise<void> {
   try {
     await db.execute(`ALTER TABLE tournament_players ADD COLUMN selected_characters_json TEXT`);
   } catch { /* exists */ }
+  try {
+    await db.execute(`ALTER TABLE tournament_players ADD COLUMN registered_name TEXT NOT NULL DEFAULT ''`);
+  } catch { /* exists */ }
+  await db.execute(`
+    UPDATE tournament_players
+    SET registered_name = COALESCE(NULLIF(trim(registered_name), ''), NULLIF(trim(name), ''), '参加者')
+  `);
+  try {
+    await db.execute(`ALTER TABLE tournament_admins ADD COLUMN registered_name TEXT NOT NULL DEFAULT ''`);
+  } catch { /* exists */ }
+  await db.execute(`
+    UPDATE tournament_admins
+    SET registered_name = COALESCE(NULLIF(trim(registered_name), ''), NULLIF(trim(name), ''), '管理者')
+  `);
   // Migration: add tree_id to matches
   try {
     await db.execute(`ALTER TABLE matches ADD COLUMN tree_id TEXT NOT NULL DEFAULT ''`);
@@ -1272,6 +1288,7 @@ function rowToTournamentPlayer(row: TournamentPlayerRow): TournamentPlayer {
   if (row.selected_characters_json) {
     try { selectedCharacters = JSON.parse(row.selected_characters_json); } catch { /* ignore */ }
   }
+  const registeredName = (row.registered_name ?? "").trim() || (row.name ?? "").trim() || "参加者";
   return {
     tournament_id: row.tournament_id,
     player_id: row.player_id,
@@ -1279,6 +1296,7 @@ function rowToTournamentPlayer(row: TournamentPlayerRow): TournamentPlayer {
     player_sequence: row.player_sequence ?? 0,
     player_id_4: row.player_id_4 ?? "0000",
     seed: row.seed,
+    registered_name: registeredName,
     name: row.name,
     character_name: row.character_name,
     selected_characters: selectedCharacters,
@@ -1315,9 +1333,9 @@ export async function addTournamentPlayer(
   try {
     await db.execute(
       `INSERT OR REPLACE INTO tournament_players
-       (tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, selected_characters_json, attributes, dq)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)`,
-      [tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, character_name, selectedCharactersJson, JSON.stringify(attributes)]
+       (tournament_id, player_id, player_code, player_sequence, player_id_4, seed, registered_name, name, character_name, selected_characters_json, attributes, dq)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0)`,
+      [tournament_id, player_id, player_code, player_sequence, player_id_4, seed, name, name, character_name, selectedCharactersJson, JSON.stringify(attributes)]
     );
   } catch {
     // Fallback for legacy schema that does not yet have player code columns.
@@ -1357,12 +1375,14 @@ function rowToTournamentAdmin(row: TournamentAdminRow): TournamentAdmin {
   } catch {
     // ignore
   }
+  const registeredName = (row.registered_name ?? "").trim() || (row.name ?? "").trim() || "管理者";
   return {
     tournament_id: row.tournament_id,
     admin_id: row.admin_id,
     admin_code: row.admin_code ?? "",
     admin_sequence: row.admin_sequence ?? 0,
     admin_id_4: row.admin_id_4 ?? "0000",
+    registered_name: registeredName,
     name: row.name,
     attributes,
     created_at: row.created_at,
@@ -1392,14 +1412,15 @@ export async function addTournamentAdmin(
   await ensureTournamentAdminsTable(db);
   await db.execute(
     `INSERT OR REPLACE INTO tournament_admins
-     (tournament_id, admin_id, admin_code, admin_sequence, admin_id_4, name, attributes, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+     (tournament_id, admin_id, admin_code, admin_sequence, admin_id_4, registered_name, name, attributes, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       tournament_id,
       admin_id,
       admin_code,
       admin_sequence,
       admin_id_4,
+      name,
       name,
       JSON.stringify(attributes),
       new Date().toISOString(),
