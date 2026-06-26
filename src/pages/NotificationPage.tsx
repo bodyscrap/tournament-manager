@@ -1595,7 +1595,7 @@ export function NotificationPage() {
           ) : (
             <div className="flex-1 overflow-y-auto">
               {threadGroups.map((group, index) => {
-                const representative = group.rootEntry ?? group.latestEntry;
+                const representative = group.entries.length > 1 ? group.latestEntry : group.rootEntry ?? group.latestEntry;
                 const representativeId = representative.message.messageId;
                 const hasChildren = group.entries.length > 1;
                 const isExpanded = hasChildren && expandedThreadIds.has(group.threadId);
