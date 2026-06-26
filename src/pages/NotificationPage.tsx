@@ -227,6 +227,7 @@ function MessageDetailView({
   requestingRemoteDq,
   approvingRemoteDq,
   remoteDqExpectedUserCode,
+  autoApproveRemoteDq,
   onRequestRemoteDq,
   onApproveRemoteDq,
 }: {
@@ -241,6 +242,7 @@ function MessageDetailView({
   requestingRemoteDq: boolean;
   approvingRemoteDq: boolean;
   remoteDqExpectedUserCode?: string;
+  autoApproveRemoteDq?: boolean;
   onRequestRemoteDq: (
     message: NotificationMessage,
     enteredUserCode: string,
@@ -289,10 +291,17 @@ function MessageDetailView({
   }, [messageId]);
 
   useEffect(() => {
+    if (autoApproveRemoteDq) {
+      if (normalizedExpectedDqCode && dqVerifiedCode !== normalizedExpectedDqCode) {
+        setDqVerifiedCode(normalizedExpectedDqCode);
+      }
+      return;
+    }
+
     if (!normalizedExpectedDqCode || !normalizedInputDqCode || normalizedInputDqCode !== dqVerifiedCode) {
       setDqVerifiedCode(null);
     }
-  }, [normalizedExpectedDqCode, normalizedInputDqCode, dqVerifiedCode]);
+  }, [autoApproveRemoteDq, normalizedExpectedDqCode, normalizedInputDqCode, dqVerifiedCode]);
 
   if (!message) {
     return (
@@ -917,7 +926,7 @@ function NewMessageDialog({
 export function NotificationPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { tournament, participants, networkMessageSettings } = useAppContext();
+  const { tournament, participants, networkMessageSettings, isTournamentWideForfeitPlayer } = useAppContext();
   const {
     receivedMessages,
     sentMessages,
@@ -1141,6 +1150,11 @@ export function NotificationPage() {
     !isSelectedThreadResolved
   );
   const remoteDqExpectedUserCode = selectedRootMessage?.targetUserCode;
+  const autoApproveRemoteDq = !!(
+    tournament &&
+    selectedRootMessage?.targetPlayerId &&
+    isTournamentWideForfeitPlayer(tournament.id, selectedRootMessage.targetPlayerId)
+  );
   const canApproveRemoteDq = !!(
     selectedMessage &&
     selectedMessage.message.attribute === "REMOTE_DQ_REQUEST" &&
@@ -1692,6 +1706,7 @@ export function NotificationPage() {
             requestingRemoteDq={requestingRemoteDq}
             approvingRemoteDq={approvingRemoteDq}
             remoteDqExpectedUserCode={remoteDqExpectedUserCode}
+            autoApproveRemoteDq={autoApproveRemoteDq}
             onRequestRemoteDq={handleRequestRemoteDq}
             onApproveRemoteDq={handleApproveRemoteDq}
           />

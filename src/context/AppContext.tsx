@@ -257,6 +257,7 @@ interface AppContextValue {
   matches: Match[];
   matchActionLogs: MatchActionLog[];
   fetchTournament: () => Promise<void>;
+  isTournamentWideForfeitPlayer: (tournamentId: string, playerId: string) => boolean;
   createNew: (
     event_code: string,
     tournament_code: string,
@@ -901,6 +902,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const isTournamentWideForfeitPlayer = useCallback((tournamentId: string, playerId: string): boolean => {
+    const normalizedTournamentId = tournamentId.trim();
+    const normalizedPlayerId = playerId.trim();
+    if (!normalizedTournamentId || !normalizedPlayerId) return false;
+    return (tournamentWideForfeitMapRef.current[normalizedTournamentId] ?? []).includes(normalizedPlayerId);
+  }, []);
 
   // ---- loaders ----
   const fetchPlayers = useCallback(async () => {
@@ -2780,6 +2788,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isRoundLocked,
     toggleRoundLock,
     fetchTournament,
+    isTournamentWideForfeitPlayer,
     createNew,
     removeTournament,
     addParticipant,
