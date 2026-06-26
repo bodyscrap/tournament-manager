@@ -24,6 +24,7 @@ export function BracketPage() {
   const location = useLocation();
   const { unreadReceivedCount } = useMessageNotification();
   const {
+    initialized,
     tournament,
     matches: tournamentMatches,
     participants,
@@ -329,6 +330,13 @@ export function BracketPage() {
     }
 
     const targetMatch = tournamentMatches.find((m) => buildMatchCardIdFromMatch(m) === matchCardId);
+
+    // On immediate route transition from notifications, bracket data may still be loading.
+    // Keep query params until at least one load cycle completes and matches are available.
+    if (!targetMatch && (!initialized || !tournament || tournamentMatches.length === 0)) {
+      return;
+    }
+
     if (!targetMatch) {
       clearRemoteDqParams();
       return;
@@ -340,12 +348,13 @@ export function BracketPage() {
     const isTargetPlayerOnCard =
       targetMatch.player1_id === dqPlayerId || targetMatch.player2_id === dqPlayerId;
 
+    handleMatchClick(targetMatch);
+
     if (!canPrefillRemoteDq || !isTargetPlayerOnCard) {
       clearRemoteDqParams();
       return;
     }
 
-    handleMatchClick(targetMatch);
     setDqLoserId(null);
     setP1Forfeit(targetMatch.player1_id === dqPlayerId);
     setP2Forfeit(targetMatch.player2_id === dqPlayerId);
@@ -356,7 +365,7 @@ export function BracketPage() {
       alert(autoAuth.message ?? "リモート棄権用コードの自動認証に失敗しました");
     }
     clearRemoteDqParams();
-  }, [location.search, tournamentMatches, navigate]);
+  }, [location.search, tournamentMatches, navigate, initialized, tournament]);
 
   const computeNewWinner = (
     m: Match,
