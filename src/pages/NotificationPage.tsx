@@ -274,9 +274,9 @@ function MessageDetailView({
   const normalizedInputDqCode = extractUserCode(dqCodeInput);
   const canSubmitRemoteDq = !!(
     canRequestRemoteDq &&
-    dqVerifiedCode &&
+    (autoApproveRemoteDq || dqVerifiedCode) &&
     normalizedExpectedDqCode &&
-    dqVerifiedCode === normalizedExpectedDqCode
+    (autoApproveRemoteDq || dqVerifiedCode === normalizedExpectedDqCode)
   );
 
   useEffect(() => {
@@ -291,12 +291,7 @@ function MessageDetailView({
   }, [messageId]);
 
   useEffect(() => {
-    if (autoApproveRemoteDq) {
-      if (normalizedExpectedDqCode && dqVerifiedCode !== normalizedExpectedDqCode) {
-        setDqVerifiedCode(normalizedExpectedDqCode);
-      }
-      return;
-    }
+    if (autoApproveRemoteDq) return;
 
     if (!normalizedExpectedDqCode || !normalizedInputDqCode || normalizedInputDqCode !== dqVerifiedCode) {
       setDqVerifiedCode(null);
@@ -328,7 +323,7 @@ function MessageDetailView({
       return;
     }
     try {
-      await onRequestRemoteDq(message, dqVerifiedCode, remoteForfeitAllMatches);
+      await onRequestRemoteDq(message, dqVerifiedCode ?? normalizedExpectedDqCode, remoteForfeitAllMatches);
       setDqCodeInput("");
       setDqVerifiedCode(null);
       setRemoteForfeitAllMatches(false);
