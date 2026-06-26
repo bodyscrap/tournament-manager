@@ -19,6 +19,94 @@ type ScannedCodeInfo = {
   name: string;
 };
 
+type MatchInputDraft = {
+  p1Wins: number;
+  p2Wins: number;
+  p1CharName: string;
+  p2CharName: string;
+  p1Forfeit: boolean;
+  p2Forfeit: boolean;
+  forfeitAllMatches: boolean;
+  dqLoserId: string | null;
+  updatedAt: string;
+};
+
+type MatchInputDraftMap = Record<string, MatchInputDraft>;
+
+const MATCH_INPUT_DRAFT_KEY = "app.bracket-match-input-drafts.v1";
+
+function buildMatchInputDraftStorageId(tournamentId: string, matchId: string): string {
+  return `${tournamentId}:${matchId}`;
+}
+
+function loadMatchInputDraftMap(): MatchInputDraftMap {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(MATCH_INPUT_DRAFT_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: MatchInputDraftMap = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const record = value as Partial<MatchInputDraft>;
+      if (
+        typeof record.p1Wins !== "number" ||
+        typeof record.p2Wins !== "number" ||
+        typeof record.p1CharName !== "string" ||
+        typeof record.p2CharName !== "string" ||
+        typeof record.p1Forfeit !== "boolean" ||
+        typeof record.p2Forfeit !== "boolean" ||
+        typeof record.forfeitAllMatches !== "boolean"
+      ) {
+        continue;
+      }
+      result[key] = {
+        p1Wins: record.p1Wins,
+        p2Wins: record.p2Wins,
+        p1CharName: record.p1CharName,
+        p2CharName: record.p2CharName,
+        p1Forfeit: record.p1Forfeit,
+        p2Forfeit: record.p2Forfeit,
+        forfeitAllMatches: record.forfeitAllMatches,
+        dqLoserId: typeof record.dqLoserId === "string" ? record.dqLoserId : null,
+        updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date(0).toISOString(),
+      };
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveMatchInputDraftMap(map: MatchInputDraftMap): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MATCH_INPUT_DRAFT_KEY, JSON.stringify(map));
+  } catch {
+    // Continue without draft persistence if localStorage is unavailable.
+  }
+}
+
+function getMatchInputDraft(tournamentId: string, matchId: string): MatchInputDraft | null {
+  const map = loadMatchInputDraftMap();
+  return map[buildMatchInputDraftStorageId(tournamentId, matchId)] ?? null;
+}
+
+function setMatchInputDraft(tournamentId: string, matchId: string, draft: MatchInputDraft): void {
+  const map = loadMatchInputDraftMap();
+  map[buildMatchInputDraftStorageId(tournamentId, matchId)] = draft;
+  saveMatchInputDraftMap(map);
+}
+
+function removeMatchInputDraft(tournamentId: string, matchId: string): void {
+  const storageId = buildMatchInputDraftStorageId(tournamentId, matchId);
+  const map = loadMatchInputDraftMap();
+  if (!map[storageId]) return;
+  delete map[storageId];
+  saveMatchInputDraftMap(map);
+}
+
 export function BracketPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -278,21 +366,38 @@ export function BracketPage() {
 
   const handleMatchClick = (match: Match) => {
     setSelectedMatch(match);
-    setP1Wins(match.player1_wins);
-    setP2Wins(match.player2_wins);
+    const draft =
+      tournament && match.status !== "completed"
+        ? getMatchInputDraft(tournament.id, match.id)
+        : null;
+
+    const resolvedP1Wins = draft?.p1Wins ?? match.player1_wins;
+    const resolvedP2Wins = draft?.p2Wins ?? match.player2_wins;
+
+    setP1Wins(resolvedP1Wins);
+    setP2Wins(resolvedP2Wins);
     const p1DefaultChar =
       match.player1_character_name ??
       (match.player1_id ? playerMap.get(match.player1_id)?.character_name ?? null : null);
     const p2DefaultChar =
       match.player2_character_name ??
       (match.player2_id ? playerMap.get(match.player2_id)?.character_name ?? null : null);
-    setP1CharName(p1DefaultChar ?? "");
-    setP2CharName(p2DefaultChar ?? "");
-    setP1Forfeit(!!match.player1_id && match.forfeit_player_id === match.player1_id);
-    setP2Forfeit(!!match.player2_id && match.forfeit_player_id === match.player2_id);
-    setForfeitAllMatches(false);
+    setP1CharName(draft?.p1CharName ?? p1DefaultChar ?? "");
+    setP2CharName(draft?.p2CharName ?? p2DefaultChar ?? "");
+
+    const restoredP1Forfeit = !!draft?.p1Forfeit && !!match.player1_id && !match.player1_id.startsWith("dummy-");
+    const restoredP2Forfeit = !!draft?.p2Forfeit && !!match.player2_id && !match.player2_id.startsWith("dummy-");
+    setP1Forfeit(restoredP1Forfeit || (!!match.player1_id && match.forfeit_player_id === match.player1_id));
+    setP2Forfeit(restoredP2Forfeit || (!!match.player2_id && match.forfeit_player_id === match.player2_id));
+
+    const restoredDqLoserId =
+      draft?.dqLoserId &&
+      (draft.dqLoserId === match.player1_id || draft.dqLoserId === match.player2_id)
+        ? draft.dqLoserId
+        : null;
+    setForfeitAllMatches(draft?.forfeitAllMatches ?? false);
     setForfeitDialogSlot(null);
-    setDqLoserId(null);
+    setDqLoserId(restoredDqLoserId);
     setConfirmAuthCode("");
     setAuthenticatedPlayerIds([]);
     setAuthenticatedAdminIds([]);
@@ -686,6 +791,7 @@ export function BracketPage() {
           scoreAuth,
           forfeitAllMatchPlayerIds
         );
+        removeMatchInputDraft(tournament.id, selectedMatch.id);
         closeModal();
       } finally {
         setSaving(false);
@@ -715,10 +821,27 @@ export function BracketPage() {
         scoreAuth,
         forfeitAllMatchPlayerIds
       );
+      removeMatchInputDraft(tournament.id, selectedMatch.id);
       closeModal();
     } finally {
       setSaving(false);
     }
+  };
+  
+  const handleUpdateDraft = () => {
+    if (!selectedMatch || !tournament || isReadOnly) return;
+    setMatchInputDraft(tournament.id, selectedMatch.id, {
+      p1Wins,
+      p2Wins,
+      p1CharName,
+      p2CharName,
+      p1Forfeit,
+      p2Forfeit,
+      forfeitAllMatches,
+      dqLoserId,
+      updatedAt: new Date().toISOString(),
+    });
+    alert("入力状態を更新しました");
   };
 
   const handleConfirmCorrect = async () => {
@@ -744,6 +867,9 @@ export function BracketPage() {
         scoreAuth,
         forfeitAllMatches ? pendingEdit.forfeitPlayerIds : []
       );
+      if (tournament) {
+        removeMatchInputDraft(tournament.id, pendingEdit.match.id);
+      }
       closeModal();
     } finally {
       setSaving(false);
@@ -776,6 +902,9 @@ export function BracketPage() {
         scoreAuth,
         forfeitAllMatches ? pendingBye.forfeitPlayerIds : []
       );
+      if (tournament) {
+        removeMatchInputDraft(tournament.id, pendingBye.match.id);
+      }
       closeModal();
     } finally {
       setSaving(false);
@@ -848,6 +977,9 @@ export function BracketPage() {
     if (!selectedMatch || isReadOnly) return;
     setSaving(true);
     try {
+      if (tournament) {
+        removeMatchInputDraft(tournament.id, selectedMatch.id);
+      }
       await setMatchReady(selectedMatch.id);
       setSelectedMatch((prev) =>
         prev
@@ -1835,6 +1967,15 @@ export function BracketPage() {
                 </div>
 
                 <div className="flex gap-2">
+                  {!isReadOnly && (
+                    <button
+                      onClick={handleUpdateDraft}
+                      disabled={saving}
+                      className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-sm font-medium disabled:opacity-50"
+                    >
+                      更新
+                    </button>
+                  )}
                   {!isReadOnly && (
                     <button
                       onClick={handleSave}
