@@ -258,6 +258,7 @@ interface AppContextValue {
   matchActionLogs: MatchActionLog[];
   fetchTournament: () => Promise<void>;
   isTournamentWideForfeitPlayer: (tournamentId: string, playerId: string) => boolean;
+  removeTournamentWideForfeitPlayerIds: (tournamentId: string, playerIds: string[]) => string[];
   createNew: (
     event_code: string,
     tournament_code: string,
@@ -2789,6 +2790,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toggleRoundLock,
     fetchTournament,
     isTournamentWideForfeitPlayer,
+    removeTournamentWideForfeitPlayerIds,
     createNew,
     removeTournament,
     addParticipant,

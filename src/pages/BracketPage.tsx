@@ -43,6 +43,9 @@ export function BracketPage() {
     isRoundLocked,
     toggleRoundLock,
     swapMatchPlayers,
+    isTournamentWideForfeitPlayer,
+    removeTournamentWideForfeitPlayerIds,
+    fetchTournament,
   } = useAppContext();
 
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
@@ -440,6 +443,12 @@ export function BracketPage() {
   };
 
   const buildScoreAuth = (match: Match, forfeitPlayerIds: string[], dqLoser: string | null) => {
+    const tournamentWideForfeitPlayerIds = [match.player1_id, match.player2_id].filter(
+      (playerId): playerId is string => !!playerId && isTournamentWideForfeitPlayer(tournament?.id ?? "", playerId)
+    );
+    const unresolvedForfeitPlayerIds = forfeitPlayerIds.filter(
+      (playerId) => !tournamentWideForfeitPlayerIds.includes(playerId)
+    );
     const hasByeForfeit = forfeitPlayerIds.some((id) => {
       if (!id) return false;
       return !playerMap.has(id);
@@ -449,7 +458,8 @@ export function BracketPage() {
     const forfeitAuthMode = tournament?.forfeit_auth_mode ?? "target_player";
     const dqAuthMode = tournament?.dq_auth_mode ?? "admin";
     const requiresDqAuth = !!dqLoser && dqAuthMode !== "none";
-    const requiresForfeitAuth = forfeitPlayerIds.length > 0 && !hasByeForfeit && forfeitAuthMode !== "none" && !requiresDqAuth;
+    const requiresForfeitAuth =
+      unresolvedForfeitPlayerIds.length > 0 && !hasByeForfeit && forfeitAuthMode !== "none" && !requiresDqAuth;
     const requiresResultAuth = !dqLoser && forfeitPlayerIds.length === 0 && resultAuthMode !== "none";
 
     const getAdminConfirmer = (): ScannedCodeInfo | null => {
@@ -489,7 +499,7 @@ export function BracketPage() {
     let dqConfirmerLocal: ScannedCodeInfo | null = null;
 
     if (requiresForfeitAuth) {
-      const targetParticipantConfirmer = forfeitPlayerIds
+      const targetParticipantConfirmer = unresolvedForfeitPlayerIds
         .map((id) => getParticipantConfirmer(id))
         .find((c): c is ScannedCodeInfo => !!c);
       if (forfeitAuthMode === "admin") {
@@ -626,13 +636,18 @@ export function BracketPage() {
   const handleSave = async () => {
     if (!selectedMatch || !tournament || isReadOnly) return;
     if (!validateRequiredMatchCharacters(selectedMatch)) return;
+    const tournamentWideForfeitPlayerIds = [selectedMatch.player1_id, selectedMatch.player2_id].filter(
+      (playerId): playerId is string => !!playerId && isTournamentWideForfeitPlayer(tournament.id, playerId)
+    );
     const rawForfeitPlayerIds = [
       p1Forfeit ? selectedMatch.player1_id : null,
       p2Forfeit ? selectedMatch.player2_id : null,
     ].filter((id): id is string => !!id);
     const hasDqLoss = !!dqLoserId;
     const forfeitPlayerIds = hasDqLoss ? [] : rawForfeitPlayerIds;
-    const forfeitAllMatchPlayerIds = hasDqLoss || !forfeitAllMatches ? [] : rawForfeitPlayerIds;
+    const forfeitAllMatchPlayerIds = hasDqLoss
+      ? []
+      : [...new Set([...(!forfeitAllMatches ? [] : rawForfeitPlayerIds), ...tournamentWideForfeitPlayerIds])];
     const appliedDqLoserId = hasDqLoss ? dqLoserId : null;
     let scoreAuth: { resultConfirmer?: ScannedCodeInfo | null; forfeitConfirmer?: ScannedCodeInfo | null; dqConfirmer?: ScannedCodeInfo | null };
     try {
@@ -955,6 +970,16 @@ export function BracketPage() {
     navigate(`/tournament/setup?editParticipantId=${encodeURIComponent(playerId)}`);
   };
 
+  const restoreTournamentWideForfeit = async (playerId: string) => {
+    if (!tournament) return;
+    const target = playerMap.get(playerId);
+    if (!target) return;
+    const ok = confirm(`「${target.player_id_4}: ${target.name}」の全試合棄権を解除しますか？`);
+    if (!ok) return;
+    await removeTournamentWideForfeitPlayerIds(tournament.id, [playerId]);
+    await fetchTournament();
+  };
+
   const openCallMessageForPlayer = (playerId: string | null) => {
     if (!playerId || playerId.startsWith("dummy-")) return;
     const selected = selectedMatch;
@@ -993,6 +1018,14 @@ export function BracketPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {tournament && isTournamentWideForfeitPlayer(tournament.id, target.player_id) && (
+                <button
+                  onClick={() => void restoreTournamentWideForfeit(target.player_id)}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800"
+                >
+                  全試合棄権解除
+                </button>
+              )}
               <button
                 onClick={() => openCallMessageForPlayer(target.player_id)}
                 className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
