@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::async_runtime::JoinHandle;
 use tokio::net::UdpSocket;
@@ -19,6 +20,12 @@ const DEFAULT_SUBNET_MASK: &str = "255.255.255.0";
 /// パケット再送間隔 (ms)。
 /// LAN 環境での UDP パケットロス対策として、50ms 間隔で 3 回送信する。
 const RETRY_INTERVAL_MS: u64 = 50;
+
+#[derive(Serialize)]
+struct UdpReceivedEvent {
+    payload: String,
+    sender_ip: String,
+}
 
 #[derive(Clone, Copy)]
 struct UdpRuntimeSettings {
@@ -106,7 +113,11 @@ async fn start_udp_listener(app: AppHandle, port: u16) {
             Ok((len, addr)) => {
                 let payload = String::from_utf8_lossy(&buf[..len]).to_string();
                 println!("[UDP] Received {} bytes from {}", len, addr);
-                if let Err(e) = app.emit("udp-received", &payload) {
+                let event = UdpReceivedEvent {
+                    payload,
+                    sender_ip: addr.ip().to_string(),
+                };
+                if let Err(e) = app.emit("udp-received", &event) {
                     eprintln!("[UDP] Failed to emit event: {}", e);
                 }
             }

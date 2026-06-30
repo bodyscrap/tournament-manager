@@ -121,6 +121,31 @@ function parseUdpPayload(payload: unknown): MessagePayload | null {
   return null;
 }
 
+function parseUdpEnvelope(payload: unknown): { messagePayload: MessagePayload | null; senderIp: string | null } {
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    if (typeof record.payload === "string") {
+      const messagePayload = parseUdpPayload(record.payload);
+      const senderIpRaw =
+        typeof record.sender_ip === "string"
+          ? record.sender_ip
+          : typeof record.senderIp === "string"
+          ? record.senderIp
+          : null;
+      return { messagePayload, senderIp: senderIpRaw };
+    }
+  }
+
+  return { messagePayload: parseUdpPayload(payload), senderIp: null };
+}
+
+function normalizeIpAddress(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const withoutMappedPrefix = raw.replace(/^::ffff:/i, "");
+  return withoutMappedPrefix.toLowerCase();
+}
+
 function toMatchSlot(slot: number | null | undefined): 1 | 2 | undefined {
   if (slot === 1 || slot === 2) return slot;
   return undefined;
@@ -437,6 +462,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
   const lastSeenByTournamentRef = useRef<LastSeenByTournament>(loadLastSeenByTournament());
   const readMessageIdsByTournamentRef = useRef<ReadMessageIdsByTournament>(loadReadMessageIdsByTournament());
   const deletedThreadIdsRef = useRef<Set<string>>(new Set());
+  const localIpRef = useRef<string>("");
 
   /**
    * 処理済み messageId の Set。
@@ -457,6 +483,22 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
   useEffect(() => {
     saveUnmatchedMessagesRef.current = networkMessageSettings.saveUnmatchedMessages;
   }, [networkMessageSettings.saveUnmatchedMessages]);
+
+  useEffect(() => {
+    let active = true;
+    void invoke<string | null>("get_local_ipv4")
+      .then((ip) => {
+        if (!active) return;
+        localIpRef.current = normalizeIpAddress(ip ?? "");
+      })
+      .catch(() => {
+        if (!active) return;
+        localIpRef.current = "";
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const persistMessage = useCallback(async (message: NotificationMessage, direction: "sent" | "received") => {
     if (!tournament) return;
@@ -695,50 +737,63 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
   const maybeSendTournamentIdCheckResult = useCallback(
     async (requestMessage: NotificationMessage): Promise<void> => {
-      if (!tournament) return;
       if (requestMessage.attribute !== "TOURNAMENT_ID_CHECK") return;
       if (!requestMessage.requestedTournamentId) return;
 
-      // 自分自身が送った確認要求には反応しない
-      if (requestMessage.sourceTournamentId === tournament.tournament_code) return;
-
-      // 進行中の大会のみ応答対象
-      if (tournament.status !== "in_progress") return;
-
-      // イベントIDと大会IDがどちらも一致する場合のみ応答
-      if (!isSameIdentifier(requestMessage.eventId, tournament.event_code)) return;
-      if (!isSameIdentifier(requestMessage.requestedTournamentId, tournament.tournament_code)) return;
-
-      const resultMessage: NotificationMessage = {
-        messageId: generateCompositeMessageId(tournament.event_code, tournament.tournament_code),
-        eventId: tournament.event_code,
-        sourceTournamentDbId: tournament.id,
-        sourceTournamentId: tournament.tournament_code,
-        sourceTournamentName: tournament.name,
-        attribute: "TOURNAMENT_ID_CHECK_RESULT",
-        title: `大会ID確認応答:${tournament.name}`,
-        body: `${tournament.event_code}-${tournament.tournament_code}:${tournament.name}\n大会IDが重複しています。ID調整をお願いします。`,
-        targetTournamentIds: [requestMessage.sourceTournamentId],
-        requestedTournamentId: requestMessage.requestedTournamentId,
-        isDuplicateTournamentId: true,
-        threadId: requestMessage.threadId ?? requestMessage.messageId,
-        parentMessageId: requestMessage.messageId,
-        rootMessageId: requestMessage.rootMessageId ?? requestMessage.threadId ?? requestMessage.messageId,
-        sentAt: nowIso(),
-        timestamp: nowIso(),
-      };
-
-      seenMessageIds.current.add(resultMessage.messageId);
-      await persistMessage(resultMessage, "sent");
-      await persistTournamentIdCheckMessage(resultMessage, "sent");
-      dispatch({
-        type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
-        message: resultMessage,
-        direction: "sent",
+      const candidates = tournamentListRef.current.filter((candidate) => {
+        if (candidate.status !== "in_progress") return false;
+        if (!isSameIdentifier(candidate.event_code, requestMessage.eventId)) return false;
+        if (!isSameIdentifier(candidate.tournament_code, requestMessage.requestedTournamentId)) return false;
+        return true;
       });
-      await broadcast({ type: "MESSAGE", data: resultMessage });
+
+      if (candidates.length === 0) return;
+
+      const rootMessageId =
+        requestMessage.rootMessageId ?? requestMessage.threadId ?? requestMessage.messageId;
+      const targetTournamentIds = [
+        requestMessage.sourceTournamentId,
+        requestMessage.sourceTournamentDbId,
+      ].filter((value): value is string => !!value && value.trim().length > 0);
+
+      await Promise.all(
+        candidates.map(async (candidate) => {
+          const sentAt = nowIso();
+          const resultMessage: NotificationMessage = {
+            messageId: generateCompositeMessageId(candidate.event_code, candidate.tournament_code),
+            eventId: candidate.event_code,
+            sourceTournamentDbId: candidate.id,
+            sourceTournamentId: candidate.tournament_code,
+            sourceTournamentName: candidate.name,
+            attribute: "TOURNAMENT_ID_CHECK_RESULT",
+            title: `大会ID確認応答:${candidate.name}`,
+            body: `${candidate.event_code}-${candidate.tournament_code}:${candidate.name}\n大会IDが重複しています。ID調整をお願いします。`,
+            targetTournamentIds,
+            requestedTournamentId: requestMessage.requestedTournamentId,
+            isDuplicateTournamentId: true,
+            threadId: requestMessage.threadId ?? requestMessage.messageId,
+            parentMessageId: requestMessage.messageId,
+            rootMessageId,
+            sentAt,
+            timestamp: sentAt,
+          };
+
+          seenMessageIds.current.add(resultMessage.messageId);
+          await persistMessageForTournament(candidate.id, resultMessage, "sent");
+          await persistTournamentIdCheckMessage(resultMessage, "sent");
+          dispatch({
+            type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
+            message: resultMessage,
+            direction: "sent",
+          });
+          if (tournamentRef.current?.id === candidate.id) {
+            dispatch({ type: "ADD_SENT_MESSAGE", message: resultMessage });
+          }
+          await broadcast({ type: "MESSAGE", data: resultMessage });
+        })
+      );
     },
-    [tournament, broadcast, persistMessage, persistTournamentIdCheckMessage]
+    [broadcast, persistMessageForTournament, persistTournamentIdCheckMessage]
   );
 
   const maybeSendTournamentIdCheckResultRef = useRef(maybeSendTournamentIdCheckResult);
@@ -955,13 +1010,19 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
     (async () => {
       unlisten = await listen<unknown>("udp-received", (event) => {
-        const payload = parseUdpPayload(event.payload);
+        const { messagePayload: payload, senderIp } = parseUdpEnvelope(event.payload);
         if (!payload) {
           console.warn("[Message] Ignored malformed UDP payload", event.payload);
           return;
         }
 
         if (payload.type !== "MESSAGE") return;
+
+        const normalizedSenderIp = normalizeIpAddress(senderIp);
+        const normalizedLocalIp = localIpRef.current;
+        if (normalizedSenderIp && normalizedLocalIp && normalizedSenderIp === normalizedLocalIp) {
+          return;
+        }
 
         const message = payload.data;
         const { messageId } = message;

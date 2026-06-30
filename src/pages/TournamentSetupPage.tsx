@@ -203,6 +203,7 @@ export function TournamentSetupPage() {
     players,
     characters,
     characterLists,
+    networkMessageSettings,
     addCharacterList,
     isReadOnly,
     createNew,
@@ -540,7 +541,7 @@ export function TournamentSetupPage() {
       });
 
       await new Promise<void>((resolve) => {
-        window.setTimeout(() => resolve(), 1000);
+        window.setTimeout(() => resolve(), networkMessageSettings.idCheckReplyWaitMs);
       });
 
       const idCheckMessages = await getTournamentIdCheckMessages();
@@ -916,6 +917,13 @@ export function TournamentSetupPage() {
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">先頭ゼロを保持して 4 桁で扱います。</p>
+            <button
+              onClick={handleCheckTournamentId}
+              disabled={creating || checkingTournamentId}
+              className="mt-2 w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+            >
+              {checkingTournamentId ? "確認中..." : "ID確認メッセージを送信"}
+            </button>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">大会名</label>
@@ -1215,13 +1223,6 @@ export function TournamentSetupPage() {
             className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
           >
             {creating ? "作成中..." : "大会を作成"}
-          </button>
-          <button
-            onClick={handleCheckTournamentId}
-            disabled={creating || checkingTournamentId}
-            className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
-          >
-            {checkingTournamentId ? "確認中..." : "ID確認メッセージを送信"}
           </button>
         </div>
       </div>

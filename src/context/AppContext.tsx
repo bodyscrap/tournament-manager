@@ -119,6 +119,7 @@ interface ScoreActionAuth {
 export interface AppNetworkMessageSettings {
   subnetMask: string;
   port: number;
+  idCheckReplyWaitMs: number;
   saveUnmatchedMessages: boolean;
   preventUnresolvedThreadDeletion: boolean;
 }
@@ -129,6 +130,7 @@ const TOURNAMENT_WIDE_FORFEIT_KEY = "app.tournament-wide-forfeit-player-ids.v1";
 const DEFAULT_APP_NETWORK_MESSAGE_SETTINGS: AppNetworkMessageSettings = {
   subnetMask: "255.255.255.0",
   port: 49777,
+  idCheckReplyWaitMs: 1000,
   saveUnmatchedMessages: true,
   preventUnresolvedThreadDeletion: true,
 };
@@ -137,6 +139,13 @@ function sanitizePort(port: unknown): number {
   const normalized = Number(port);
   if (!Number.isInteger(normalized)) return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.port;
   return Math.min(65535, Math.max(1, normalized));
+}
+
+function sanitizeIdCheckReplyWaitMs(value: unknown): number {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) return DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.idCheckReplyWaitMs;
+  const rounded = Math.round(normalized);
+  return Math.min(10000, Math.max(100, rounded));
 }
 
 function loadAppNetworkMessageSettings(): AppNetworkMessageSettings {
@@ -151,6 +160,7 @@ function loadAppNetworkMessageSettings(): AppNetworkMessageSettings {
           ? parsed.subnetMask.trim()
           : DEFAULT_APP_NETWORK_MESSAGE_SETTINGS.subnetMask,
       port: sanitizePort(parsed.port),
+      idCheckReplyWaitMs: sanitizeIdCheckReplyWaitMs(parsed.idCheckReplyWaitMs),
       saveUnmatchedMessages:
         typeof parsed.saveUnmatchedMessages === "boolean"
           ? parsed.saveUnmatchedMessages
@@ -2739,6 +2749,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ? patch.subnetMask.trim()
             : prev.subnetMask,
         port: patch.port == null ? prev.port : sanitizePort(patch.port),
+        idCheckReplyWaitMs:
+          patch.idCheckReplyWaitMs == null
+            ? prev.idCheckReplyWaitMs
+            : sanitizeIdCheckReplyWaitMs(patch.idCheckReplyWaitMs),
         saveUnmatchedMessages:
           typeof patch.saveUnmatchedMessages === "boolean"
             ? patch.saveUnmatchedMessages

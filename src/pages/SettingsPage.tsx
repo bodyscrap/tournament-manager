@@ -23,6 +23,9 @@ export function SettingsPage() {
 
   const [subnetMaskInput, setSubnetMaskInput] = useState(networkMessageSettings.subnetMask);
   const [portInput, setPortInput] = useState(String(networkMessageSettings.port));
+  const [idCheckReplyWaitMsInput, setIdCheckReplyWaitMsInput] = useState(
+    String(networkMessageSettings.idCheckReplyWaitMs)
+  );
   const [localIp, setLocalIp] = useState<string>("-");
   const [ipLoading, setIpLoading] = useState(false);
   const [ipError, setIpError] = useState("");
@@ -49,7 +52,12 @@ export function SettingsPage() {
   useEffect(() => {
     setSubnetMaskInput(networkMessageSettings.subnetMask);
     setPortInput(String(networkMessageSettings.port));
-  }, [networkMessageSettings.subnetMask, networkMessageSettings.port]);
+    setIdCheckReplyWaitMsInput(String(networkMessageSettings.idCheckReplyWaitMs));
+  }, [
+    networkMessageSettings.subnetMask,
+    networkMessageSettings.port,
+    networkMessageSettings.idCheckReplyWaitMs,
+  ]);
 
   useEffect(() => {
     void fetchLocalIp();
@@ -68,10 +76,17 @@ export function SettingsPage() {
       return;
     }
 
+    const idCheckReplyWaitMs = Number(idCheckReplyWaitMsInput);
+    if (!Number.isFinite(idCheckReplyWaitMs) || idCheckReplyWaitMs < 100 || idCheckReplyWaitMs > 10000) {
+      setError("返信待ち時間は 100 から 10000 ミリ秒で入力してください");
+      return;
+    }
+
     setError("");
     updateNetworkMessageSettings({
       subnetMask: normalizedMask,
       port,
+      idCheckReplyWaitMs,
     });
     setSavedAt(new Date().toLocaleTimeString("ja-JP", { hour12: false }));
   };
@@ -109,6 +124,23 @@ export function SettingsPage() {
             onChange={(e) => setPortInput(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
+        </div>
+
+        <div>
+          <label htmlFor="id-check-wait-ms" className="block text-sm font-medium text-gray-700 mb-1">
+            大会ID確認の返信待ち時間 (ms)
+          </label>
+          <input
+            id="id-check-wait-ms"
+            type="number"
+            min={100}
+            max={10000}
+            step={100}
+            value={idCheckReplyWaitMsInput}
+            onChange={(e) => setIdCheckReplyWaitMsInput(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-500 mt-1">既定値: 1000ms</p>
         </div>
 
         <div>
