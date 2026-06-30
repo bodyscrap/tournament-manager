@@ -1130,6 +1130,16 @@ export function NotificationPage() {
   );
 
   useEffect(() => {
+    if (!tournament && (tab === "received" || tab === "sent")) {
+      setTab("unmatched");
+      setSelectedMessageId(null);
+      setSelectedThreadIds(new Set());
+      setThreadSelectionAnchorIndex(null);
+      setExpandedThreadIds(new Set());
+    }
+  }, [tournament, tab]);
+
+  useEffect(() => {
     if (messages.length > 0 && !selectedMessageId) {
       setSelectedMessageId(messages[0].message.messageId);
     }
@@ -1469,14 +1479,6 @@ export function NotificationPage() {
     }
   };
 
-  if (!tournament) {
-    return (
-      <div className="flex items-center justify-center h-full py-20 text-gray-400">
-        <p className="text-sm">大会が選択されていません</p>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full flex flex-col bg-white">
       {/* ヘッダー */}
@@ -1484,16 +1486,24 @@ export function NotificationPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">📢 メッセージ</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            イベント: <span className="font-mono">{tournament.event_code}</span>
-            {" / "}大会: <span className="font-mono">{tournament.tournament_code}</span>
+            {tournament ? (
+              <>
+                イベント: <span className="font-mono">{tournament.event_code}</span>
+                {" / "}大会: <span className="font-mono">{tournament.tournament_code}</span>
+              </>
+            ) : (
+              <>大会未選択（未受理メッセージ / 大会ID確認リストは閲覧可能）</>
+            )}
           </p>
         </div>
         <button
           onClick={() => {
+            if (!tournament) return;
             setComposePreset(null);
             setShowCompose(true);
           }}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+          disabled={!tournament}
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
         >
           + メッセージを作成
         </button>
@@ -1503,12 +1513,14 @@ export function NotificationPage() {
       <div className="flex gap-1 px-6 py-4 bg-gray-100 border-b border-gray-200">
         <button
           onClick={() => {
+            if (!tournament) return;
             setTab("received");
             setSelectedMessageId(null);
             setSelectedThreadIds(new Set());
             setThreadSelectionAnchorIndex(null);
             setExpandedThreadIds(new Set());
           }}
+          disabled={!tournament}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
             tab === "received" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
           }`}
@@ -1517,12 +1529,14 @@ export function NotificationPage() {
         </button>
         <button
           onClick={() => {
+            if (!tournament) return;
             setTab("sent");
             setSelectedMessageId(null);
             setSelectedThreadIds(new Set());
             setThreadSelectionAnchorIndex(null);
             setExpandedThreadIds(new Set());
           }}
+          disabled={!tournament}
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
             tab === "sent" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
           }`}
@@ -1692,7 +1706,7 @@ export function NotificationPage() {
         </div>
       </div>
 
-      {showCompose && (
+      {showCompose && tournament && (
         <NewMessageDialog
           playerOptions={playerOptions}
           tournamentName={tournament.name}

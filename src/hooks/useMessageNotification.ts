@@ -804,24 +804,14 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
   useEffect(() => {
     const loadPersistedMessages = async () => {
-      if (!tournament) {
-        dispatch({
-          type: "HYDRATE_MESSAGES",
-          receivedMessages: [],
-          sentMessages: [],
-          unmatchedMessages: [],
-          tournamentIdCheckMessages: [],
-          unreadReceivedMessageIds: [],
-        });
-        return;
-      }
-
-      const records = await getTournamentMessages(tournament.id);
       const tournamentIdCheckRecords = await getTournamentIdCheckMessages();
       const unmatchedRecords = networkMessageSettings.saveUnmatchedMessages
         ? await getUnmatchedMessages()
         : [];
-      const readMessageIds = new Set(readMessageIdsByTournamentRef.current[tournament.id] ?? []);
+      const records = tournament ? await getTournamentMessages(tournament.id) : [];
+      const readMessageIds = new Set(
+        tournament ? readMessageIdsByTournamentRef.current[tournament.id] ?? [] : []
+      );
       const received = records
         .filter((record) => record.direction === "received")
         .map((record) => ({
