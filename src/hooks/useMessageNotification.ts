@@ -102,6 +102,22 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function parseUdpPayload(payload: unknown): MessagePayload | null {
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload) as MessagePayload;
+    } catch {
+      return null;
+    }
+  }
+
+  if (payload && typeof payload === "object") {
+    return payload as MessagePayload;
+  }
+
+  return null;
+}
+
 function toMatchSlot(slot: number | null | undefined): 1 | 2 | undefined {
   if (slot === 1 || slot === 2) return slot;
   return undefined;
@@ -372,6 +388,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
   const { tournament, tournamentList, networkMessageSettings } = useAppContext();
   const [state, dispatch] = useReducer(reducer, initialState);
   const previousTournamentIdRef = useRef<string | null>(null);
+  const tournamentRef = useRef(tournament);
+  const tournamentListRef = useRef(tournamentList);
+  const saveUnmatchedMessagesRef = useRef(networkMessageSettings.saveUnmatchedMessages);
   const lastSeenByTournamentRef = useRef<LastSeenByTournament>(loadLastSeenByTournament());
   const readMessageIdsByTournamentRef = useRef<ReadMessageIdsByTournament>(loadReadMessageIdsByTournament());
   const deletedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -383,6 +402,18 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
    * State ではなく Ref にすることで再レンダリングを回避する。
    */
   const seenMessageIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    tournamentRef.current = tournament;
+  }, [tournament]);
+
+  useEffect(() => {
+    tournamentListRef.current = tournamentList;
+  }, [tournamentList]);
+
+  useEffect(() => {
+    saveUnmatchedMessagesRef.current = networkMessageSettings.saveUnmatchedMessages;
+  }, [networkMessageSettings.saveUnmatchedMessages]);
 
   const persistMessage = useCallback(async (message: NotificationMessage, direction: "sent" | "received") => {
     if (!tournament) return;
@@ -574,16 +605,6 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     dispatch({ type: "MARK_RECEIVED_READ", messageId });
   }, [tournament?.id]);
 
-  const shouldAcceptByDestination = useCallback(
-    (message: NotificationMessage): boolean => {
-      const targets = normalizeTargetTournamentIds(message.targetTournamentIds);
-      if (targets.length === 0) return true;
-      if (!tournament) return false;
-      return matchesTournamentDestination(tournament, targets);
-    },
-    [tournament]
-  );
-
   const maybeSendTournamentIdCheckResult = useCallback(
     async (requestMessage: NotificationMessage): Promise<void> => {
       if (!tournament) return;
@@ -625,10 +646,13 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     [tournament, broadcast, persistMessage]
   );
 
-  // ── UDP 受信リスナー ────────────────────────
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
+  const maybeSendTournamentIdCheckResultRef = useRef(maybeSendTournamentIdCheckResult);
 
+  useEffect(() => {
+    maybeSendTournamentIdCheckResultRef.current = maybeSendTournamentIdCheckResult;
+  }, [maybeSendTournamentIdCheckResult]);
+
+  useEffect(() => {
     const loadPersistedMessages = async () => {
       if (!tournament) {
         dispatch({
@@ -784,14 +808,17 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     };
 
     void loadPersistedMessages();
+  }, [tournament, networkMessageSettings.saveUnmatchedMessages]);
+
+  // ── UDP 受信リスナー ────────────────────────
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
 
     (async () => {
-      unlisten = await listen<string>("udp-received", (event) => {
-        let payload: MessagePayload;
-        try {
-          payload = JSON.parse(event.payload) as MessagePayload;
-        } catch {
-          // 不正な JSON は無視
+      unlisten = await listen<unknown>("udp-received", (event) => {
+        const payload = parseUdpPayload(event.payload);
+        if (!payload) {
+          console.warn("[Message] Ignored malformed UDP payload", event.payload);
           return;
         }
 
@@ -809,7 +836,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         seenMessageIds.current.add(messageId);
 
         void (async () => {
-          const sameEventTournaments = tournamentList.filter((t) =>
+          const currentTournament = tournamentRef.current;
+          const currentTournamentList = tournamentListRef.current;
+          const sameEventTournaments = currentTournamentList.filter((t) =>
             isSameIdentifier(t.event_code, message.eventId)
           );
           const targets = normalizeTargetTournamentIds(message.targetTournamentIds);
@@ -826,12 +855,12 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           }
 
           if (
-            tournament &&
-            isSameIdentifier(tournament.event_code, message.eventId) &&
-            !acceptedTournaments.some((accepted) => accepted.id === tournament.id) &&
-            matchesTournamentDestination(tournament, targets)
+            currentTournament &&
+            isSameIdentifier(currentTournament.event_code, message.eventId) &&
+            !acceptedTournaments.some((accepted) => accepted.id === currentTournament.id) &&
+            matchesTournamentDestination(currentTournament, targets)
           ) {
-            acceptedTournaments.push(tournament);
+            acceptedTournaments.push(currentTournament);
           }
 
           message.receivedAt = nowIso();
@@ -844,26 +873,26 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
               eventId: message.eventId,
               sourceTournamentId: message.sourceTournamentId,
               targets,
-              activeTournamentCode: tournament?.tournament_code,
-              activeTournamentId: tournament?.id,
+              activeTournamentCode: currentTournament?.tournament_code,
+              activeTournamentId: currentTournament?.id,
             });
-            if (networkMessageSettings.saveUnmatchedMessages) {
+            if (saveUnmatchedMessagesRef.current) {
               await persistUnmatchedMessage(message);
-              if (tournament) {
+              if (currentTournament) {
                 dispatch({ type: "ADD_UNMATCHED_MESSAGE", message });
               }
             }
             return;
           }
 
-          if (tournament && acceptedTournaments.some((t) => t.id === tournament.id)) {
+          if (currentTournament && acceptedTournaments.some((t) => t.id === currentTournament.id)) {
             dispatch({
               type: "RECEIVE_MESSAGE",
               message,
               markAsUnread: true,
             });
             notifyIncomingMessage(message);
-            void maybeSendTournamentIdCheckResult(message);
+            void maybeSendTournamentIdCheckResultRef.current(message);
           }
 
           const persistResults = await Promise.allSettled(
@@ -886,16 +915,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     return () => {
       unlisten?.();
     };
-  }, [
-    tournament,
-    tournamentList,
-    shouldAcceptByDestination,
-    maybeSendTournamentIdCheckResult,
-    persistMessageForTournament,
-    persistUnmatchedMessage,
-    notifyIncomingMessage,
-    networkMessageSettings.saveUnmatchedMessages,
-  ]);
+  }, [persistMessageForTournament, persistUnmatchedMessage, notifyIncomingMessage]);
 
   useEffect(() => {
     const currentTournamentId = tournament?.id ?? null;
