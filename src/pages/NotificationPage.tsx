@@ -3,15 +3,24 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessageNotification } from "../hooks/useMessageNotification";
 import { QrScannerDialog } from "../components/common/QrScannerDialog";
-import type { ReceivedMessageEntry, SentMessageEntry, UnmatchedMessageEntry } from "../hooks/useMessageNotification";
+import type {
+  ReceivedMessageEntry,
+  SentMessageEntry,
+  TournamentIdCheckMessageEntry,
+  UnmatchedMessageEntry,
+} from "../hooks/useMessageNotification";
 import type { MessageAttribute, NotificationMessage } from "../lib/types/notification";
 import { extractUserCode } from "../lib/playerCode";
 
 const MAX_COMMENT_LEN = 300;
 
-type Tab = "received" | "sent" | "unmatched";
-type ComposeKind = "CALL" | "TOURNAMENT_ID_CHECK" | "GENERAL";
-type MessageListEntry = ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry;
+type Tab = "received" | "sent" | "unmatched" | "tournament_id_check";
+type ComposeKind = "CALL" | "GENERAL";
+type MessageListEntry =
+  | ReceivedMessageEntry
+  | SentMessageEntry
+  | UnmatchedMessageEntry
+  | TournamentIdCheckMessageEntry;
 
 type ThreadGroup = {
   threadId: string;
@@ -657,12 +666,11 @@ function NewMessageDialog({
       ? initialSelectedPlayerId
       : playerOptions[0]?.playerId ?? "";
 
-  const [kind, setKind] = useState<ComposeKind>(isCallComposePreset ? "CALL" : "GENERAL");
+  const kind: ComposeKind = isCallComposePreset ? "CALL" : "GENERAL";
   const [selectedPlayerId, setSelectedPlayerId] = useState(initialPlayerId);
   const [targetTournamentIdsInput, setTargetTournamentIdsInput] = useState("");
   const [comment, setComment] = useState(initialComment ?? "");
   const [generalTitle, setGeneralTitle] = useState("");
-  const [requestedTournamentId, setRequestedTournamentId] = useState(tournamentCode);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
 
@@ -729,30 +737,6 @@ function NewMessageDialog({
         return;
       }
 
-      if (kind === "TOURNAMENT_ID_CHECK") {
-        if (tournamentStatus !== "in_progress") {
-          setError("大会ID確認メッセージは進行中の大会でのみ送信できます");
-          return;
-        }
-        const requestedId = requestedTournamentId.trim();
-        if (!requestedId) {
-          setError("確認対象の大会IDを入力してください");
-          return;
-        }
-
-        const body = `${eventCode}-${tournamentCode}:${tournamentName}\n大会ID確認要求: ${requestedId}\n同一大会IDのクライアントは自動応答してください。`;
-        await onSend({
-          attribute: "TOURNAMENT_ID_CHECK",
-          title: `大会ID確認:${tournamentName}`,
-          body,
-          comment: trimmedComment || undefined,
-          requestedTournamentId: requestedId,
-          targetTournamentIds: targetTournamentIds.length > 0 ? targetTournamentIds : undefined,
-        });
-        onClose();
-        return;
-      }
-
       const title = generalTitle.trim();
       if (!title) {
         setError("汎用メッセージのタイトルを入力してください");
@@ -798,23 +782,17 @@ function NewMessageDialog({
         </div>
 
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">メッセージ属性</label>
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as ComposeKind)}
-            >
-              {isCallComposePreset && <option value="CALL">呼出</option>}
-              <option value="TOURNAMENT_ID_CHECK">大会ID確認</option>
-              <option value="GENERAL">汎用</option>
-            </select>
-            {!isCallComposePreset && (
-              <p className="text-xs text-gray-500 mt-1">
-                呼出はブラケットの対戦カード詳細から作成してください。
-              </p>
-            )}
-          </div>
+          {isCallComposePreset ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">メッセージ属性</label>
+              <div className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700">呼出</div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">メッセージ属性</label>
+              <div className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700">汎用（固定）</div>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -861,17 +839,6 @@ function NewMessageDialog({
                 </pre>
               </div>
             </>
-          )}
-
-          {kind === "TOURNAMENT_ID_CHECK" && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">確認対象の大会ID</label>
-              <input
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-                value={requestedTournamentId}
-                onChange={(e) => setRequestedTournamentId(e.target.value)}
-              />
-            </div>
           )}
 
           {kind === "GENERAL" && (
@@ -926,6 +893,7 @@ export function NotificationPage() {
     receivedMessages,
     sentMessages,
     unmatchedMessages,
+    tournamentIdCheckMessages,
     sendMessage,
     deleteThreads,
     isReceivedMessageUnread,
@@ -968,12 +936,14 @@ export function NotificationPage() {
         return sentMessages;
       case "unmatched":
         return unmatchedMessages;
+      case "tournament_id_check":
+        return tournamentIdCheckMessages;
     }
-  }, [tab, receivedMessages, sentMessages, unmatchedMessages]);
+  }, [tab, receivedMessages, sentMessages, unmatchedMessages, tournamentIdCheckMessages]);
 
   const allMessages = useMemo(() => {
-    return [...receivedMessages, ...sentMessages, ...unmatchedMessages].map((entry) => entry.message);
-  }, [receivedMessages, sentMessages, unmatchedMessages]);
+    return [...receivedMessages, ...sentMessages, ...unmatchedMessages, ...tournamentIdCheckMessages].map((entry) => entry.message);
+  }, [receivedMessages, sentMessages, unmatchedMessages, tournamentIdCheckMessages]);
 
   const resolvedThreadKeyByMessageId = useMemo(() => {
     const messageById = new Map(allMessages.map((message) => [message.messageId, message] as const));
@@ -1572,6 +1542,20 @@ export function NotificationPage() {
           }`}
         >
           未受理メッセージ
+        </button>
+        <button
+          onClick={() => {
+            setTab("tournament_id_check");
+            setSelectedMessageId(null);
+            setSelectedThreadIds(new Set());
+            setThreadSelectionAnchorIndex(null);
+            setExpandedThreadIds(new Set());
+          }}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            tab === "tournament_id_check" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          大会ID確認リスト
         </button>
       </div>
 

@@ -366,6 +366,80 @@ export interface UnmatchedMessageRecordRow {
   created_at: string;
 }
 
+export interface TournamentIdCheckMessageRecord {
+  id: string;
+  direction: TournamentMessageDirection;
+  event_code: string;
+  source_tournament_db_id: string | null;
+  source_tournament_id: string;
+  source_tournament_name: string;
+  attribute: string;
+  title: string;
+  body: string;
+  comment: string | null;
+  target_tournament_ids: string[];
+  target_player_id: string | null;
+  target_player_name: string | null;
+  target_user_code: string | null;
+  requested_tournament_id: string | null;
+  match_card_id: string | null;
+  match_slot: number | null;
+  remote_dq_target_player_id: string | null;
+  remote_dq_target_player_name: string | null;
+  remote_dq_target_user_code: string | null;
+  remote_dq_requested_by_tournament_id: string | null;
+  remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: boolean;
+  remote_dq_approved: boolean;
+  is_duplicate_tournament_id: boolean;
+  thread_id: string | null;
+  parent_message_id: string | null;
+  root_message_id: string | null;
+  thread_resolved: boolean;
+  thread_resolved_at: string | null;
+  thread_resolved_by_tournament_id: string | null;
+  thread_resolved_by_tournament_name: string | null;
+  timestamp: string;
+  created_at: string;
+}
+
+export interface TournamentIdCheckMessageRecordRow {
+  id: string;
+  direction: TournamentMessageDirection;
+  event_code: string;
+  source_tournament_db_id: string | null;
+  source_tournament_id: string;
+  source_tournament_name: string;
+  attribute: string;
+  title: string;
+  body: string;
+  comment: string | null;
+  target_tournament_ids_json: string | null;
+  target_player_id: string | null;
+  target_player_name: string | null;
+  target_user_code: string | null;
+  requested_tournament_id: string | null;
+  match_card_id: string | null;
+  match_slot: number | null;
+  remote_dq_target_player_id: string | null;
+  remote_dq_target_player_name: string | null;
+  remote_dq_target_user_code: string | null;
+  remote_dq_requested_by_tournament_id: string | null;
+  remote_dq_requested_by_tournament_name: string | null;
+  remote_dq_for_all_matches: number | null;
+  remote_dq_approved: number | null;
+  is_duplicate_tournament_id: number | null;
+  thread_id: string | null;
+  parent_message_id: string | null;
+  root_message_id: string | null;
+  thread_resolved: number | null;
+  thread_resolved_at: string | null;
+  thread_resolved_by_tournament_id: string | null;
+  thread_resolved_by_tournament_name: string | null;
+  timestamp: string;
+  created_at: string;
+}
+
 // =====================
 // BracketTree
 // =====================

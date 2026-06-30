@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
+import { useMessageNotification } from "../hooks/useMessageNotification";
+import { getTournamentIdCheckMessages } from "../lib/database";
 import type {
   CharacterInputMode,
   MatchActionAuthMode,
@@ -219,6 +221,7 @@ export function TournamentSetupPage() {
     finalizeTournament,
     trees,
   } = useAppContext();
+  const { sendDraftTournamentIdCheck } = useMessageNotification();
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -244,6 +247,7 @@ export function TournamentSetupPage() {
   const [createTotalMinSelect, setCreateTotalMinSelect] = useState(1);
   const [createTotalMaxSelect, setCreateTotalMaxSelect] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [checkingTournamentId, setCheckingTournamentId] = useState(false);
   const [creatingUsedCharacterList, setCreatingUsedCharacterList] = useState(false);
 
   // --- 設定編集 (setup フェーズ) ---
@@ -517,6 +521,52 @@ export function TournamentSetupPage() {
       }
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleCheckTournamentId = async () => {
+    const eventCode = normalizeEventCode(createEventCode);
+    const tournamentCode = normalizeTournamentCode(createTournamentCode);
+    const tournamentName =
+      name.trim() ||
+      `大会 ${new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "short", day: "numeric" })}`;
+
+    setCheckingTournamentId(true);
+    try {
+      const probe = await sendDraftTournamentIdCheck({
+        eventId: eventCode,
+        tournamentId: tournamentCode,
+        tournamentName,
+      });
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(() => resolve(), 1000);
+      });
+
+      const idCheckMessages = await getTournamentIdCheckMessages();
+      const duplicateReplies = idCheckMessages.filter((entry) => {
+        if (entry.attribute !== "TOURNAMENT_ID_CHECK_RESULT") return false;
+        if (entry.direction !== "received") return false;
+        if (normalizeEventCode(entry.event_code) !== eventCode) return false;
+        if (normalizeTournamentCode(entry.requested_tournament_id ?? "") !== tournamentCode) return false;
+
+        const isReplyToProbe =
+          entry.thread_id === probe.messageId ||
+          entry.root_message_id === probe.messageId ||
+          entry.parent_message_id === probe.messageId;
+        return isReplyToProbe;
+      });
+
+      if (duplicateReplies.length > 0) {
+        alert("イベントID-大会IDが重複しています。詳細は未受理メッセージを確認してください。");
+        return;
+      }
+
+      alert("重複応答は見つかりませんでした。");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "大会ID確認メッセージの送信に失敗しました");
+    } finally {
+      setCheckingTournamentId(false);
     }
   };
 
@@ -1161,10 +1211,17 @@ export function TournamentSetupPage() {
           )}
           <button
             onClick={handleCreate}
-            disabled={creating}
+            disabled={creating || checkingTournamentId}
             className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
           >
             {creating ? "作成中..." : "大会を作成"}
+          </button>
+          <button
+            onClick={handleCheckTournamentId}
+            disabled={creating || checkingTournamentId}
+            className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+          >
+            {checkingTournamentId ? "確認中..." : "ID確認メッセージを送信"}
           </button>
         </div>
       </div>

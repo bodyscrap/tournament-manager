@@ -32,6 +32,8 @@ import type {
   TournamentMessageRecordRow,
   UnmatchedMessageRecord,
   UnmatchedMessageRecordRow,
+  TournamentIdCheckMessageRecord,
+  TournamentIdCheckMessageRecordRow,
 } from "./types";
 import { normalizeCharacterSelectionConfig } from "./characterSelection";
 
@@ -303,6 +305,62 @@ async function ensureUnmatchedMessagesTable(db: Database): Promise<void> {
   }
 }
 
+async function ensureTournamentIdCheckMessagesTable(db: Database): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tournament_id_check_messages (
+      id                    TEXT PRIMARY KEY,
+      direction             TEXT NOT NULL DEFAULT 'received',
+      event_code            TEXT NOT NULL,
+      source_tournament_id  TEXT NOT NULL,
+      source_tournament_db_id TEXT,
+      source_tournament_name TEXT NOT NULL,
+      attribute             TEXT NOT NULL,
+      title                 TEXT NOT NULL,
+      body                  TEXT NOT NULL,
+      comment               TEXT,
+      target_tournament_ids_json TEXT,
+      target_player_id      TEXT,
+      target_player_name    TEXT,
+      target_user_code      TEXT,
+      requested_tournament_id TEXT,
+      match_card_id         TEXT,
+      match_slot            INTEGER,
+      remote_dq_target_player_id TEXT,
+      remote_dq_target_player_name TEXT,
+      remote_dq_target_user_code TEXT,
+      remote_dq_requested_by_tournament_id TEXT,
+      remote_dq_requested_by_tournament_name TEXT,
+      remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0,
+      remote_dq_approved    INTEGER NOT NULL DEFAULT 0,
+      is_duplicate_tournament_id INTEGER,
+      thread_id             TEXT,
+      parent_message_id     TEXT,
+      root_message_id       TEXT,
+      thread_resolved       INTEGER NOT NULL DEFAULT 0,
+      thread_resolved_at    TEXT,
+      thread_resolved_by_tournament_id TEXT,
+      thread_resolved_by_tournament_name TEXT,
+      timestamp             TEXT NOT NULL,
+      created_at            TEXT NOT NULL
+    );
+  `);
+
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN match_card_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN match_slot INTEGER`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_target_player_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_target_player_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_target_user_code TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_requested_by_tournament_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_requested_by_tournament_name TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_for_all_matches INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN remote_dq_approved INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN thread_resolved INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN thread_resolved_at TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN thread_resolved_by_tournament_id TEXT`); } catch {}
+  try { await db.execute(`ALTER TABLE tournament_id_check_messages ADD COLUMN thread_resolved_by_tournament_name TEXT`); } catch {}
+}
+
 export async function getDb(): Promise<Database> {
   if (!_db) {
     _db = await Database.load("sqlite:tournament.db");
@@ -382,6 +440,7 @@ async function initSchema(db: Database): Promise<void> {
   await ensureMatchActionLogsTable(db);
   await ensureTournamentMessagesTable(db);
   await ensureUnmatchedMessagesTable(db);
+  await ensureTournamentIdCheckMessagesTable(db);
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS matches (
@@ -1198,6 +1257,57 @@ function rowToUnmatchedMessage(row: UnmatchedMessageRecordRow): UnmatchedMessage
   };
 }
 
+function rowToTournamentIdCheckMessage(row: TournamentIdCheckMessageRecordRow): TournamentIdCheckMessageRecord {
+  let targetTournamentIds: string[] = [];
+  if (row.target_tournament_ids_json) {
+    try {
+      const parsed = JSON.parse(row.target_tournament_ids_json) as unknown;
+      if (Array.isArray(parsed)) {
+        targetTournamentIds = parsed.filter((item): item is string => typeof item === "string");
+      }
+    } catch {
+      targetTournamentIds = [];
+    }
+  }
+
+  return {
+    id: row.id,
+    direction: row.direction,
+    event_code: row.event_code,
+    source_tournament_db_id: row.source_tournament_db_id,
+    source_tournament_id: row.source_tournament_id,
+    source_tournament_name: row.source_tournament_name,
+    attribute: row.attribute,
+    title: row.title,
+    body: row.body,
+    comment: row.comment,
+    target_tournament_ids: targetTournamentIds,
+    target_player_id: row.target_player_id,
+    target_player_name: row.target_player_name,
+    target_user_code: row.target_user_code,
+    requested_tournament_id: row.requested_tournament_id,
+    match_card_id: row.match_card_id,
+    match_slot: row.match_slot,
+    remote_dq_target_player_id: row.remote_dq_target_player_id,
+    remote_dq_target_player_name: row.remote_dq_target_player_name,
+    remote_dq_target_user_code: row.remote_dq_target_user_code,
+    remote_dq_requested_by_tournament_id: row.remote_dq_requested_by_tournament_id,
+    remote_dq_requested_by_tournament_name: row.remote_dq_requested_by_tournament_name,
+    remote_dq_for_all_matches: row.remote_dq_for_all_matches === 1,
+    remote_dq_approved: row.remote_dq_approved === 1,
+    is_duplicate_tournament_id: row.is_duplicate_tournament_id === 1,
+    thread_id: row.thread_id,
+    parent_message_id: row.parent_message_id,
+    root_message_id: row.root_message_id,
+    thread_resolved: row.thread_resolved === 1,
+    thread_resolved_at: row.thread_resolved_at,
+    thread_resolved_by_tournament_id: row.thread_resolved_by_tournament_id,
+    thread_resolved_by_tournament_name: row.thread_resolved_by_tournament_name,
+    timestamp: row.timestamp,
+    created_at: row.created_at,
+  };
+}
+
 export async function getUnmatchedMessages(): Promise<UnmatchedMessageRecord[]> {
   const db = await getDb();
   await ensureUnmatchedMessagesTable(db);
@@ -1273,6 +1383,89 @@ export async function deleteUnmatchedMessageThread(thread_id: string): Promise<v
   await ensureUnmatchedMessagesTable(db);
   await db.execute(
     `DELETE FROM unmatched_messages
+     WHERE id = $1 OR thread_id = $1 OR root_message_id = $1`,
+    [thread_id]
+  );
+}
+
+export async function getTournamentIdCheckMessages(): Promise<TournamentIdCheckMessageRecord[]> {
+  const db = await getDb();
+  await ensureTournamentIdCheckMessagesTable(db);
+  const rows = await db.select<TournamentIdCheckMessageRecordRow[]>(
+    "SELECT * FROM tournament_id_check_messages ORDER BY created_at DESC"
+  );
+  return rows.map(rowToTournamentIdCheckMessage);
+}
+
+export async function insertTournamentIdCheckMessage(
+  record: TournamentIdCheckMessageRecord
+): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentIdCheckMessagesTable(db);
+  await db.execute(
+    `INSERT OR IGNORE INTO tournament_id_check_messages (
+      id, direction, event_code, source_tournament_id, source_tournament_db_id,
+      source_tournament_name, attribute, title, body, comment, target_tournament_ids_json,
+      target_player_id, target_player_name, target_user_code, requested_tournament_id,
+      match_card_id, match_slot, remote_dq_target_player_id, remote_dq_target_player_name,
+      remote_dq_target_user_code, remote_dq_requested_by_tournament_id, remote_dq_requested_by_tournament_name, remote_dq_for_all_matches, remote_dq_approved,
+      is_duplicate_tournament_id, thread_id, parent_message_id, root_message_id,
+      thread_resolved, thread_resolved_at, thread_resolved_by_tournament_id, thread_resolved_by_tournament_name,
+      timestamp, created_at
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      $6, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15,
+      $16, $17, $18, $19,
+      $20, $21, $22, $23, $24,
+      $25, $26, $27, $28,
+      $29, $30, $31, $32,
+      $33, $34
+    )`,
+    [
+      record.id,
+      record.direction,
+      record.event_code,
+      record.source_tournament_id,
+      record.source_tournament_db_id,
+      record.source_tournament_name,
+      record.attribute,
+      record.title,
+      record.body,
+      record.comment,
+      JSON.stringify(record.target_tournament_ids ?? []),
+      record.target_player_id,
+      record.target_player_name,
+      record.target_user_code,
+      record.requested_tournament_id,
+      record.match_card_id,
+      record.match_slot,
+      record.remote_dq_target_player_id,
+      record.remote_dq_target_player_name,
+      record.remote_dq_target_user_code,
+      record.remote_dq_requested_by_tournament_id,
+      record.remote_dq_requested_by_tournament_name,
+      record.remote_dq_for_all_matches ? 1 : 0,
+      record.remote_dq_approved ? 1 : 0,
+      record.is_duplicate_tournament_id ? 1 : 0,
+      record.thread_id,
+      record.parent_message_id,
+      record.root_message_id,
+      record.thread_resolved ? 1 : 0,
+      record.thread_resolved_at,
+      record.thread_resolved_by_tournament_id,
+      record.thread_resolved_by_tournament_name,
+      record.timestamp,
+      record.created_at,
+    ]
+  );
+}
+
+export async function deleteTournamentIdCheckMessageThread(thread_id: string): Promise<void> {
+  const db = await getDb();
+  await ensureTournamentIdCheckMessagesTable(db);
+  await db.execute(
+    `DELETE FROM tournament_id_check_messages
      WHERE id = $1 OR thread_id = $1 OR root_message_id = $1`,
     [thread_id]
   );

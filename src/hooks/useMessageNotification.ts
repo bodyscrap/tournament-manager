@@ -17,10 +17,13 @@ import type {
 } from "../lib/types/notification";
 import { useAppContext } from "../context/AppContext";
 import {
+  deleteTournamentIdCheckMessageThread,
   deleteTournamentMessageThread,
   deleteUnmatchedMessageThread,
+  getTournamentIdCheckMessages,
   getTournamentMessages,
   getUnmatchedMessages,
+  insertTournamentIdCheckMessage,
   insertUnmatchedMessage,
   insertTournamentMessage,
 } from "../lib/database";
@@ -192,10 +195,16 @@ export interface UnmatchedMessageEntry {
   message: NotificationMessage;
 }
 
+export interface TournamentIdCheckMessageEntry {
+  message: NotificationMessage;
+  direction: "sent" | "received";
+}
+
 interface NotificationState {
   receivedMessages: ReceivedMessageEntry[];
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
+  tournamentIdCheckMessages: TournamentIdCheckMessageEntry[];
   unreadReceivedMessageIds: string[];
   unreadReceivedCount: number;
 }
@@ -206,16 +215,22 @@ type NotificationAction =
       receivedMessages: ReceivedMessageEntry[];
       sentMessages: SentMessageEntry[];
       unmatchedMessages: UnmatchedMessageEntry[];
+      tournamentIdCheckMessages: TournamentIdCheckMessageEntry[];
       unreadReceivedMessageIds: string[];
     }
   | { type: "RECEIVE_MESSAGE"; message: NotificationMessage; markAsUnread: boolean }
   | { type: "ADD_SENT_MESSAGE"; message: NotificationMessage }
   | { type: "ADD_UNMATCHED_MESSAGE"; message: NotificationMessage }
+  | {
+      type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE";
+      message: NotificationMessage;
+      direction: "sent" | "received";
+    }
   | { type: "MARK_RECEIVED_READ"; messageId: string }
   | { type: "MARK_ALL_RECEIVED_READ" }
   | {
       type: "DELETE_THREADS";
-      tab: "received" | "sent" | "unmatched";
+      tab: "received" | "sent" | "unmatched" | "tournament_id_check";
       threadIds: string[];
     };
 
@@ -254,6 +269,7 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         receivedMessages: action.receivedMessages,
         sentMessages: action.sentMessages,
         unmatchedMessages: action.unmatchedMessages,
+        tournamentIdCheckMessages: action.tournamentIdCheckMessages,
         unreadReceivedMessageIds: action.unreadReceivedMessageIds,
         unreadReceivedCount: action.unreadReceivedMessageIds.length,
       };
@@ -268,6 +284,17 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
       return {
         ...state,
         unmatchedMessages: [{ message: action.message }, ...state.unmatchedMessages],
+      };
+
+    case "ADD_TOURNAMENT_ID_CHECK_MESSAGE":
+      return {
+        ...state,
+        tournamentIdCheckMessages: [
+          { message: action.message, direction: action.direction },
+          ...state.tournamentIdCheckMessages.filter(
+            (entry) => entry.message.messageId !== action.message.messageId
+          ),
+        ],
       };
 
     case "MARK_RECEIVED_READ":
@@ -297,6 +324,15 @@ function reducer(state: NotificationState, action: NotificationAction): Notifica
         return {
           ...state,
           unmatchedMessages: state.unmatchedMessages.filter(
+            (entry) => !isInThread(entry.message, threadIdSet)
+          ),
+        };
+      }
+
+      if (action.tab === "tournament_id_check") {
+        return {
+          ...state,
+          tournamentIdCheckMessages: state.tournamentIdCheckMessages.filter(
             (entry) => !isInThread(entry.message, threadIdSet)
           ),
         };
@@ -334,6 +370,7 @@ const initialState: NotificationState = {
   receivedMessages: [],
   sentMessages: [],
   unmatchedMessages: [],
+  tournamentIdCheckMessages: [],
   unreadReceivedMessageIds: [],
   unreadReceivedCount: 0,
 };
@@ -342,6 +379,7 @@ type MessageNotificationContextValue = {
   receivedMessages: ReceivedMessageEntry[];
   sentMessages: SentMessageEntry[];
   unmatchedMessages: UnmatchedMessageEntry[];
+  tournamentIdCheckMessages: TournamentIdCheckMessageEntry[];
   unreadReceivedCount: number;
   isReceivedMessageUnread: (messageId: string) => boolean;
   markReceivedMessageRead: (messageId: string) => void;
@@ -372,8 +410,13 @@ type MessageNotificationContextValue = {
     threadResolvedByTournamentId?: string;
     threadResolvedByTournamentName?: string;
   }) => Promise<void>;
+  sendDraftTournamentIdCheck: (input: {
+    eventId: string;
+    tournamentId: string;
+    tournamentName?: string;
+  }) => Promise<{ messageId: string; sentAt: string }>;
   deleteThreads: (
-    tab: "received" | "sent" | "unmatched",
+    tab: "received" | "sent" | "unmatched" | "tournament_id_check",
     threadIds: string[]
   ) => Promise<void>;
 };
@@ -537,6 +580,51 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     });
   }, []);
 
+  const persistTournamentIdCheckMessage = useCallback(
+    async (message: NotificationMessage, direction: "sent" | "received") => {
+      if (message.attribute !== "TOURNAMENT_ID_CHECK" && message.attribute !== "TOURNAMENT_ID_CHECK_RESULT") {
+        return;
+      }
+      await insertTournamentIdCheckMessage({
+        id: message.messageId,
+        direction,
+        event_code: message.eventId,
+        source_tournament_id: message.sourceTournamentId,
+        source_tournament_db_id: message.sourceTournamentDbId ?? null,
+        source_tournament_name: message.sourceTournamentName,
+        attribute: message.attribute,
+        title: message.title,
+        body: message.body,
+        comment: message.comment ?? null,
+        target_tournament_ids: message.targetTournamentIds ?? [],
+        target_player_id: message.targetPlayerId ?? null,
+        target_player_name: message.targetPlayerName ?? null,
+        target_user_code: message.targetUserCode ?? null,
+        requested_tournament_id: message.requestedTournamentId ?? null,
+        match_card_id: message.matchCardId ?? null,
+        match_slot: message.matchSlot ?? null,
+        remote_dq_target_player_id: message.remoteDqTargetPlayerId ?? null,
+        remote_dq_target_player_name: message.remoteDqTargetPlayerName ?? null,
+        remote_dq_target_user_code: message.remoteDqTargetUserCode ?? null,
+        remote_dq_requested_by_tournament_id: message.remoteDqRequestedByTournamentId ?? null,
+        remote_dq_requested_by_tournament_name: message.remoteDqRequestedByTournamentName ?? null,
+        remote_dq_for_all_matches: message.remoteDqForAllMatches ?? false,
+        remote_dq_approved: message.remoteDqApproved ?? false,
+        is_duplicate_tournament_id: message.isDuplicateTournamentId ?? false,
+        thread_id: message.threadId ?? message.messageId,
+        parent_message_id: message.parentMessageId ?? null,
+        root_message_id: message.rootMessageId ?? message.threadId ?? message.messageId,
+        thread_resolved: message.threadResolved ?? false,
+        thread_resolved_at: message.threadResolvedAt ?? null,
+        thread_resolved_by_tournament_id: message.threadResolvedByTournamentId ?? null,
+        thread_resolved_by_tournament_name: message.threadResolvedByTournamentName ?? null,
+        timestamp: message.sentAt ?? message.timestamp,
+        created_at: nowIso(),
+      });
+    },
+    []
+  );
+
   const broadcast = useCallback(async (payload: MessagePayload) => {
     await invoke<void>("send_udp_broadcast", { payload: JSON.stringify(payload) });
   }, []);
@@ -617,8 +705,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       // 進行中の大会のみ応答対象
       if (tournament.status !== "in_progress") return;
 
-      // 確認要求された大会IDと自大会IDが一致する場合のみ応答
-      if (requestMessage.requestedTournamentId !== tournament.tournament_code) return;
+      // イベントIDと大会IDがどちらも一致する場合のみ応答
+      if (!isSameIdentifier(requestMessage.eventId, tournament.event_code)) return;
+      if (!isSameIdentifier(requestMessage.requestedTournamentId, tournament.tournament_code)) return;
 
       const resultMessage: NotificationMessage = {
         messageId: generateCompositeMessageId(tournament.event_code, tournament.tournament_code),
@@ -641,9 +730,15 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
 
       seenMessageIds.current.add(resultMessage.messageId);
       await persistMessage(resultMessage, "sent");
+      await persistTournamentIdCheckMessage(resultMessage, "sent");
+      dispatch({
+        type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
+        message: resultMessage,
+        direction: "sent",
+      });
       await broadcast({ type: "MESSAGE", data: resultMessage });
     },
-    [tournament, broadcast, persistMessage]
+    [tournament, broadcast, persistMessage, persistTournamentIdCheckMessage]
   );
 
   const maybeSendTournamentIdCheckResultRef = useRef(maybeSendTournamentIdCheckResult);
@@ -660,12 +755,14 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           receivedMessages: [],
           sentMessages: [],
           unmatchedMessages: [],
+          tournamentIdCheckMessages: [],
           unreadReceivedMessageIds: [],
         });
         return;
       }
 
       const records = await getTournamentMessages(tournament.id);
+      const tournamentIdCheckRecords = await getTournamentIdCheckMessages();
       const unmatchedRecords = networkMessageSettings.saveUnmatchedMessages
         ? await getUnmatchedMessages()
         : [];
@@ -794,15 +891,57 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         },
       }));
 
+      const tournamentIdCheckMessages = tournamentIdCheckRecords.map((record) => ({
+        direction: record.direction,
+        message: {
+          messageId: record.id,
+          eventId: record.event_code,
+          sourceTournamentDbId: record.source_tournament_db_id ?? undefined,
+          sourceTournamentId: record.source_tournament_id,
+          sourceTournamentName: record.source_tournament_name,
+          attribute: record.attribute as MessageAttribute,
+          title: record.title,
+          body: record.body,
+          comment: record.comment ?? undefined,
+          targetTournamentIds: record.target_tournament_ids,
+          targetPlayerId: record.target_player_id ?? undefined,
+          targetPlayerName: record.target_player_name ?? undefined,
+          targetUserCode: record.target_user_code ?? undefined,
+          requestedTournamentId: record.requested_tournament_id ?? undefined,
+          matchCardId: record.match_card_id ?? undefined,
+          matchSlot: toMatchSlot(record.match_slot),
+          remoteDqTargetPlayerId: record.remote_dq_target_player_id ?? undefined,
+          remoteDqTargetPlayerName: record.remote_dq_target_player_name ?? undefined,
+          remoteDqTargetUserCode: record.remote_dq_target_user_code ?? undefined,
+          remoteDqRequestedByTournamentId: record.remote_dq_requested_by_tournament_id ?? undefined,
+          remoteDqRequestedByTournamentName: record.remote_dq_requested_by_tournament_name ?? undefined,
+          remoteDqForAllMatches: record.remote_dq_for_all_matches,
+          remoteDqApproved: record.remote_dq_approved,
+          isDuplicateTournamentId: record.is_duplicate_tournament_id,
+          threadId: record.thread_id ?? undefined,
+          parentMessageId: record.parent_message_id ?? undefined,
+          rootMessageId: record.root_message_id ?? undefined,
+          threadResolved: record.thread_resolved,
+          threadResolvedAt: record.thread_resolved_at ?? undefined,
+          threadResolvedByTournamentId: record.thread_resolved_by_tournament_id ?? undefined,
+          threadResolvedByTournamentName: record.thread_resolved_by_tournament_name ?? undefined,
+          sentAt: record.timestamp,
+          receivedAt: record.created_at,
+          timestamp: record.timestamp,
+        },
+      }));
+
       seenMessageIds.current = new Set([
         ...records.map((record) => record.id),
         ...unmatchedRecords.map((record) => record.id),
+        ...tournamentIdCheckRecords.map((record) => record.id),
       ]);
       dispatch({
         type: "HYDRATE_MESSAGES",
         receivedMessages: received,
         sentMessages: sent,
         unmatchedMessages: unmatched,
+        tournamentIdCheckMessages,
         unreadReceivedMessageIds,
       });
     };
@@ -866,6 +1005,18 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
           message.receivedAt = nowIso();
           message.sentAt = message.sentAt ?? message.timestamp;
 
+          if (
+            message.attribute === "TOURNAMENT_ID_CHECK" ||
+            message.attribute === "TOURNAMENT_ID_CHECK_RESULT"
+          ) {
+            await persistTournamentIdCheckMessage(message, "received");
+            dispatch({
+              type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
+              message,
+              direction: "received",
+            });
+          }
+
           if (acceptedTournaments.length === 0) {
             console.warn("[Message] Dropped incoming message by destination/event filter", {
               messageId: message.messageId,
@@ -915,7 +1066,12 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     return () => {
       unlisten?.();
     };
-  }, [persistMessageForTournament, persistUnmatchedMessage, notifyIncomingMessage]);
+  }, [
+    persistMessageForTournament,
+    persistUnmatchedMessage,
+    notifyIncomingMessage,
+    persistTournamentIdCheckMessage,
+  ]);
 
   useEffect(() => {
     const currentTournamentId = tournament?.id ?? null;
@@ -1007,15 +1163,78 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
       seenMessageIds.current.add(message.messageId);
       dispatch({ type: "ADD_SENT_MESSAGE", message });
       await persistMessage(message, "sent");
+      if (message.attribute === "TOURNAMENT_ID_CHECK" || message.attribute === "TOURNAMENT_ID_CHECK_RESULT") {
+        await persistTournamentIdCheckMessage(message, "sent");
+        dispatch({
+          type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
+          message,
+          direction: "sent",
+        });
+      }
       await broadcast({ type: "MESSAGE", data: message });
     },
-    [tournament, broadcast, persistMessage]
+    [tournament, broadcast, persistMessage, persistTournamentIdCheckMessage]
+  );
+
+  const sendDraftTournamentIdCheck = useCallback(
+    async (input: {
+      eventId: string;
+      tournamentId: string;
+      tournamentName?: string;
+    }): Promise<{ messageId: string; sentAt: string }> => {
+      const sentAt = nowIso();
+      const draftTournamentName = input.tournamentName?.trim() || "仮大会";
+      const messageId = generateCompositeMessageId(input.eventId, input.tournamentId);
+
+      const message: NotificationMessage = {
+        messageId,
+        eventId: input.eventId,
+        sourceTournamentId: input.tournamentId,
+        sourceTournamentName: draftTournamentName,
+        attribute: "TOURNAMENT_ID_CHECK",
+        title: `大会ID確認:${draftTournamentName}`,
+        body:
+          `${input.eventId}-${input.tournamentId}:${draftTournamentName}\n` +
+          `大会ID確認要求: ${input.tournamentId}\n` +
+          "イベントIDと大会IDの両方が一致するクライアントは自動応答してください。",
+        requestedTournamentId: input.tournamentId,
+        threadId: messageId,
+        rootMessageId: messageId,
+        sentAt,
+        timestamp: sentAt,
+      };
+
+      seenMessageIds.current.add(message.messageId);
+      await persistTournamentIdCheckMessage(message, "sent");
+      dispatch({
+        type: "ADD_TOURNAMENT_ID_CHECK_MESSAGE",
+        message,
+        direction: "sent",
+      });
+      await broadcast({ type: "MESSAGE", data: message });
+      return { messageId, sentAt };
+    },
+    [broadcast, persistTournamentIdCheckMessage]
   );
 
   const deleteThreads = useCallback(
-    async (tab: "received" | "sent" | "unmatched", threadIds: string[]): Promise<void> => {
+    async (
+      tab: "received" | "sent" | "unmatched" | "tournament_id_check",
+      threadIds: string[]
+    ): Promise<void> => {
       const normalizedThreadIds = [...new Set(threadIds.map((id) => id.trim()).filter((id) => !!id))];
       if (normalizedThreadIds.length === 0) return;
+
+      if (tab === "tournament_id_check") {
+        for (const threadId of normalizedThreadIds) {
+          deletedThreadIdsRef.current.add(threadId);
+        }
+        await Promise.all(
+          normalizedThreadIds.map((threadId) => deleteTournamentIdCheckMessageThread(threadId))
+        );
+        dispatch({ type: "DELETE_THREADS", tab, threadIds: normalizedThreadIds });
+        return;
+      }
 
       if (tab === "unmatched") {
         for (const threadId of normalizedThreadIds) {
@@ -1047,11 +1266,13 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
         receivedMessages: state.receivedMessages,
         sentMessages: state.sentMessages,
         unmatchedMessages: state.unmatchedMessages,
+        tournamentIdCheckMessages: state.tournamentIdCheckMessages,
         unreadReceivedCount: state.unreadReceivedCount,
         isReceivedMessageUnread: (messageId: string) =>
           state.unreadReceivedMessageIds.includes(messageId),
         markReceivedMessageRead,
         sendMessage,
+        sendDraftTournamentIdCheck,
         deleteThreads,
       },
     },
@@ -1069,10 +1290,12 @@ export function useMessageNotification() {
     receivedMessages: context.receivedMessages,
     sentMessages: context.sentMessages,
     unmatchedMessages: context.unmatchedMessages,
+    tournamentIdCheckMessages: context.tournamentIdCheckMessages,
     unreadReceivedCount: context.unreadReceivedCount,
     isReceivedMessageUnread: context.isReceivedMessageUnread,
     markReceivedMessageRead: context.markReceivedMessageRead,
     sendMessage: context.sendMessage,
+    sendDraftTournamentIdCheck: context.sendDraftTournamentIdCheck,
     deleteThreads: context.deleteThreads,
   };
 }
