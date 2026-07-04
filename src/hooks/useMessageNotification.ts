@@ -802,6 +802,79 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     maybeSendTournamentIdCheckResultRef.current = maybeSendTournamentIdCheckResult;
   }, [maybeSendTournamentIdCheckResult]);
 
+  const autoResolvePreviousCallThreads = useCallback(
+    async (
+      activeTournament: { id: string; event_code: string; tournament_code: string; name: string },
+      incomingCall: NotificationMessage
+    ) => {
+      if (incomingCall.attribute !== "CALL") return;
+      if (!incomingCall.matchCardId) return;
+
+      const records = await getTournamentMessages(activeTournament.id);
+      const incomingThreadId =
+        incomingCall.rootMessageId ?? incomingCall.threadId ?? incomingCall.messageId;
+
+      const matchedCallThreadIds = new Set(
+        records
+          .filter((record) => record.direction === "received")
+          .filter((record) => record.attribute === "CALL")
+          .filter((record) => record.id !== incomingCall.messageId)
+          .filter((record) => isSameIdentifier(record.event_code, incomingCall.eventId))
+          .filter((record) => isSameIdentifier(record.source_tournament_id, incomingCall.sourceTournamentId))
+          .filter((record) => (record.match_card_id ?? "") === incomingCall.matchCardId)
+          .map((record) => record.root_message_id ?? record.thread_id ?? record.id)
+          .filter((threadId) => !!threadId && threadId !== incomingThreadId)
+      );
+
+      if (matchedCallThreadIds.size === 0) return;
+
+      const resolvedThreadIds = new Set(
+        records
+          .filter((record) => record.attribute === "THREAD_RESOLVED" || record.thread_resolved)
+          .map((record) => record.root_message_id ?? record.thread_id ?? record.id)
+          .filter((threadId): threadId is string => !!threadId)
+      );
+
+      const targetThreadIds = [...matchedCallThreadIds].filter((threadId) => !resolvedThreadIds.has(threadId));
+      if (targetThreadIds.length === 0) return;
+
+      for (const threadId of targetThreadIds) {
+        const resolvedAt = nowIso();
+        const localResolveMessage: NotificationMessage = {
+          messageId: generateCompositeMessageId(activeTournament.event_code, activeTournament.tournament_code),
+          eventId: activeTournament.event_code,
+          sourceTournamentDbId: activeTournament.id,
+          sourceTournamentId: activeTournament.tournament_code,
+          sourceTournamentName: activeTournament.name,
+          attribute: "THREAD_RESOLVED",
+          title: "[自動解決] 過去の呼び出し",
+          body:
+            `${incomingCall.eventId}-${incomingCall.sourceTournamentId}:${incomingCall.sourceTournamentName} から` +
+            `同一カードID(${incomingCall.matchCardId})の呼び出しを受信したため、過去スレッドを自動解決しました。`,
+          threadId,
+          rootMessageId: threadId,
+          threadResolved: true,
+          threadResolvedAt: resolvedAt,
+          threadResolvedByTournamentId: activeTournament.tournament_code,
+          threadResolvedByTournamentName: activeTournament.name,
+          sentAt: resolvedAt,
+          timestamp: resolvedAt,
+        };
+
+        seenMessageIds.current.add(localResolveMessage.messageId);
+        await persistMessageForTournament(activeTournament.id, localResolveMessage, "received");
+        if (tournamentRef.current?.id === activeTournament.id) {
+          dispatch({
+            type: "RECEIVE_MESSAGE",
+            message: localResolveMessage,
+            markAsUnread: false,
+          });
+        }
+      }
+    },
+    [persistMessageForTournament]
+  );
+
   useEffect(() => {
     const loadPersistedMessages = async () => {
       const tournamentIdCheckRecords = await getTournamentIdCheckMessages();
@@ -1095,6 +1168,9 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
             });
             notifyIncomingMessage(message);
             void maybeSendTournamentIdCheckResultRef.current(message);
+            void autoResolvePreviousCallThreads(currentTournament, message).catch((error) => {
+              console.error("[Message] Failed to auto-resolve previous call threads", error);
+            });
           }
 
           const persistResults = await Promise.allSettled(
@@ -1122,6 +1198,7 @@ export function MessageNotificationProvider({ children }: { children: ReactNode 
     persistUnmatchedMessage,
     notifyIncomingMessage,
     persistTournamentIdCheckMessage,
+    autoResolvePreviousCallThreads,
   ]);
 
   useEffect(() => {

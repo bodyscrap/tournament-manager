@@ -559,7 +559,7 @@ export function TournamentSetupPage() {
       });
 
       if (duplicateReplies.length > 0) {
-        alert("イベントID-大会IDが重複しています。詳細は未受理メッセージを確認してください。");
+        alert("イベントID-大会IDが重複しています。詳細は大会ID確認リストを確認してください。");
         return;
       }
 

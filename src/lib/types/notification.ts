@@ -29,6 +29,8 @@ export type UserCode = string;
  */
 export type MessageAttribute =
   | "CALL"
+  | "CALL_REPLY_ABSENT"
+  | "CALL_REPLY_PLAYING"
   | "TOURNAMENT_ID_CHECK"
   | "GENERAL"
   | "TOURNAMENT_ID_CHECK_RESULT"

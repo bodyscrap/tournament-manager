@@ -52,6 +52,10 @@ function attributeLabel(attribute: MessageAttribute): string {
   switch (attribute) {
     case "CALL":
       return "呼出";
+    case "CALL_REPLY_ABSENT":
+      return "呼出応答(不在)";
+    case "CALL_REPLY_PLAYING":
+      return "呼出応答(プレイ中)";
     case "TOURNAMENT_ID_CHECK":
       return "大会ID確認";
     case "GENERAL":
@@ -73,6 +77,10 @@ function attributeColor(attribute: MessageAttribute): string {
   switch (attribute) {
     case "CALL":
       return "bg-red-100 text-red-700";
+    case "CALL_REPLY_ABSENT":
+      return "bg-orange-100 text-orange-700";
+    case "CALL_REPLY_PLAYING":
+      return "bg-cyan-100 text-cyan-700";
     case "TOURNAMENT_ID_CHECK":
     case "TOURNAMENT_ID_CHECK_RESULT":
       return "bg-amber-100 text-amber-700";
@@ -232,12 +240,15 @@ function MessageDetailView({
   onResolveThread,
   resolvingThread,
   canRequestRemoteDq,
+  canSendCallReply,
   canApproveRemoteDq,
+  sendingCallReply,
   requestingRemoteDq,
   approvingRemoteDq,
   remoteDqExpectedUserCode,
   autoApproveRemoteDq,
   onRequestRemoteDq,
+  onSendCallReply,
   onApproveRemoteDq,
 }: {
   entry: ReceivedMessageEntry | SentMessageEntry | UnmatchedMessageEntry | null;
@@ -247,7 +258,9 @@ function MessageDetailView({
   onResolveThread: (message: NotificationMessage, resolveComment?: string) => Promise<void>;
   resolvingThread: boolean;
   canRequestRemoteDq: boolean;
+  canSendCallReply: boolean;
   canApproveRemoteDq: boolean;
+  sendingCallReply: boolean;
   requestingRemoteDq: boolean;
   approvingRemoteDq: boolean;
   remoteDqExpectedUserCode?: string;
@@ -256,6 +269,11 @@ function MessageDetailView({
     message: NotificationMessage,
     enteredUserCode: string,
     forAllMatches: boolean
+  ) => Promise<void>;
+  onSendCallReply: (
+    message: NotificationMessage,
+    replyKind: "ABSENT" | "PLAYING",
+    comment?: string
   ) => Promise<void>;
   onApproveRemoteDq: (requestMessage: NotificationMessage) => Promise<void>;
 }) {
@@ -269,6 +287,8 @@ function MessageDetailView({
   const [showResolveForm, setShowResolveForm] = useState(false);
   const [resolveComment, setResolveComment] = useState("");
   const [resolveError, setResolveError] = useState("");
+  const [callReplyComment, setCallReplyComment] = useState("");
+  const [callReplyError, setCallReplyError] = useState("");
 
   const message = entry?.message ?? null;
   const messageId = message?.messageId ?? "";
@@ -297,6 +317,8 @@ function MessageDetailView({
     setShowResolveForm(false);
     setResolveComment("");
     setResolveError("");
+    setCallReplyComment("");
+    setCallReplyError("");
   }, [messageId]);
 
   useEffect(() => {
@@ -338,6 +360,21 @@ function MessageDetailView({
       setRemoteForfeitAllMatches(false);
     } catch (e) {
       setDqError(String(e));
+    }
+  };
+
+  const handleSendCallReply = async (replyKind: "ABSENT" | "PLAYING") => {
+    setCallReplyError("");
+    const trimmedComment = callReplyComment.trim();
+    if (trimmedComment.length > MAX_COMMENT_LEN) {
+      setCallReplyError("通信欄は 300 文字以下で入力してください");
+      return;
+    }
+    try {
+      await onSendCallReply(message, replyKind, trimmedComment || undefined);
+      setCallReplyComment("");
+    } catch (e) {
+      setCallReplyError(String(e));
     }
   };
 
@@ -587,6 +624,47 @@ function MessageDetailView({
                 送信内容: {remoteForfeitAllMatches ? "全試合を棄権" : "この試合を棄権"}
               </p>
               {dqError && <p className="text-xs text-rose-700">{dqError}</p>}
+            </div>
+          </div>
+        )}
+
+        {canSendCallReply && (
+          <div>
+            <h3 className="text-xs font-medium text-gray-500 uppercase mb-2">呼び出し応答</h3>
+            <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 space-y-2">
+              <p className="text-xs text-sky-800">定型応答を送信します。必要に応じて通信欄を入力できます。</p>
+              <textarea
+                rows={3}
+                placeholder="通信欄（任意）"
+                className="w-full border border-sky-300 rounded-lg px-3 py-2 text-sm"
+                value={callReplyComment}
+                onChange={(e) => setCallReplyComment(e.target.value.slice(0, MAX_COMMENT_LEN))}
+                disabled={sendingCallReply}
+              />
+              <div className="flex items-end justify-between gap-2">
+                <p className="text-xs text-gray-500">{callReplyComment.length} / {MAX_COMMENT_LEN}</p>
+                {callReplyError && <p className="text-xs text-red-600">{callReplyError}</p>}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => {
+                    void handleSendCallReply("ABSENT");
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-60"
+                  disabled={sendingCallReply}
+                >
+                  {sendingCallReply ? "送信中..." : "不在を返信"}
+                </button>
+                <button
+                  onClick={() => {
+                    void handleSendCallReply("PLAYING");
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-60"
+                  disabled={sendingCallReply}
+                >
+                  {sendingCallReply ? "送信中..." : "プレイ中を返信"}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -915,6 +993,7 @@ export function NotificationPage() {
   const [expandedThreadIds, setExpandedThreadIds] = useState<Set<string>>(new Set());
   const [resolvingThread, setResolvingThread] = useState(false);
   const [requestingRemoteDq, setRequestingRemoteDq] = useState(false);
+  const [sendingCallReply, setSendingCallReply] = useState(false);
   const [approvingRemoteDq, setApprovingRemoteDq] = useState(false);
 
   const playerOptions = useMemo<PlayerOption[]>(() => {
@@ -1112,6 +1191,14 @@ export function NotificationPage() {
     selectedRootMessage.targetUserCode &&
     selectedRootMessage.matchCardId &&
     selectedRootMessage.matchSlot &&
+    !isSelectedThreadResolved
+  );
+  const canSendCallReply = !!(
+    tab === "received" &&
+    selectedRootMessage &&
+    selectedRootMessage.attribute === "CALL" &&
+    tournament &&
+    selectedRootMessage.sourceTournamentId !== tournament.tournament_code &&
     !isSelectedThreadResolved
   );
   const remoteDqExpectedUserCode = selectedRootMessage?.targetUserCode;
@@ -1428,6 +1515,44 @@ export function NotificationPage() {
     }
   };
 
+  const handleSendCallReply = async (
+    baseMessage: NotificationMessage,
+    replyKind: "ABSENT" | "PLAYING",
+    comment?: string
+  ) => {
+    if (!tournament) throw new Error("大会が選択されていません");
+
+    const threadId = baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessageId = baseMessage.rootMessageId ?? baseMessage.threadId ?? baseMessage.messageId;
+    const rootMessage = allMessages.find((message) => message.messageId === rootMessageId);
+    if (!rootMessage) throw new Error("スレッド先頭メッセージが見つかりません");
+    if (rootMessage.attribute !== "CALL") throw new Error("呼び出しスレッドでのみ応答できます");
+
+    const targets = [rootMessage.sourceTournamentId, rootMessage.sourceTournamentDbId]
+      .filter((value): value is string => !!value && value.trim().length > 0);
+    const isAbsent = replyKind === "ABSENT";
+
+    setSendingCallReply(true);
+    try {
+      await sendMessage({
+        attribute: isAbsent ? "CALL_REPLY_ABSENT" : "CALL_REPLY_PLAYING",
+        title: `${isAbsent ? "不在返信" : "プレイ中返信"}: ${rootMessage.title}`,
+        body: isAbsent
+          ? "こちらの会場には居ないようです。"
+          : "現在プレイ中です。少々お待ちください。",
+        comment,
+        targetTournamentIds: targets,
+        threadId,
+        parentMessageId: baseMessage.messageId,
+        rootMessageId,
+        matchCardId: rootMessage.matchCardId,
+        matchSlot: rootMessage.matchSlot,
+      });
+    } finally {
+      setSendingCallReply(false);
+    }
+  };
+
   const handleApproveRemoteDq = async (requestMessage: NotificationMessage) => {
     if (!tournament) throw new Error("大会が選択されていません");
 
@@ -1695,12 +1820,15 @@ export function NotificationPage() {
             onResolveThread={handleResolveThread}
             resolvingThread={resolvingThread}
             canRequestRemoteDq={canRequestRemoteDq}
+            canSendCallReply={canSendCallReply}
             canApproveRemoteDq={canApproveRemoteDq}
+            sendingCallReply={sendingCallReply}
             requestingRemoteDq={requestingRemoteDq}
             approvingRemoteDq={approvingRemoteDq}
             remoteDqExpectedUserCode={remoteDqExpectedUserCode}
             autoApproveRemoteDq={autoApproveRemoteDq}
             onRequestRemoteDq={handleRequestRemoteDq}
+            onSendCallReply={handleSendCallReply}
             onApproveRemoteDq={handleApproveRemoteDq}
           />
         </div>
